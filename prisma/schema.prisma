@@ -1,0 +1,450 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum ProductStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PAID
+  PARTIAL
+  UNPAID
+  CANCELLED
+}
+
+enum PaymentDirection {
+  CUSTOMER_IN
+  SUPPLIER_OUT
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CARD
+  JAZZCASH
+  EASYPAISA
+  CHEQUE
+  OTHER
+}
+
+enum StockMovementType {
+  OPENING
+  PURCHASE
+  SALE
+  RETURN_IN
+  RETURN_OUT
+  ADJUSTMENT
+  DAMAGE
+}
+
+enum PurchaseStatus {
+  ORDERED
+  RECEIVED
+  PARTIAL
+  CANCELLED
+}
+
+model Shop {
+  id          String   @id @default(cuid())
+  name        String
+  city        String
+  address     String?
+  phone       String?
+  currency    String   @default("PKR")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  categories  Category[]
+  products    Product[]
+  customers   Customer[]
+  suppliers   Supplier[]
+  invoices    Invoice[]
+  purchases   Purchase[]
+  payments    Payment[]
+  movements   StockMovement[]
+  assistantThreads AssistantThread[]
+  activityLogs ActivityLog[]
+
+  @@index([createdAt])
+}
+
+model User {
+  id           String     @id @default(cuid())
+  shopId       String
+  shop         Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         UserRole
+  status       UserStatus @default(ACTIVE)
+  phone        String?
+  designation  String?
+  cnic         String?
+  shift        String?
+  branchArea   String?
+  joiningDate  DateTime?
+  permissions  Json?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  invoices     Invoice[]  @relation("InvoiceCreator")
+  purchases    Purchase[] @relation("PurchaseCreator")
+  payments     Payment[]  @relation("PaymentCreator")
+  movements    StockMovement[]
+  assistantThreads AssistantThread[]
+  assistantMessages AssistantMessage[]
+  activityLogs ActivityLog[]
+
+  @@index([shopId, role])
+  @@index([shopId, status])
+  @@index([shopId, branchArea])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name      String
+  color     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@unique([shopId, name])
+  @@index([shopId, createdAt])
+}
+
+model Product {
+  id                String        @id @default(cuid())
+  shopId            String
+  shop              Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  categoryId        String?
+  category          Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  supplierId        String?
+  supplier          Supplier?     @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  sku               String
+  barcode           String?
+  name              String
+  brand             String?
+  description       String?
+  imageUrl          String?
+  unit              String        @default("pcs")
+  costPrice         Decimal       @db.Decimal(12,2)
+  salePrice         Decimal       @db.Decimal(12,2)
+  taxRate           Decimal       @default(0) @db.Decimal(5,2)
+  discountRate      Decimal       @default(0) @db.Decimal(5,2)
+  stockQty          Int           @default(0)
+  reorderLevel      Int           @default(5)
+  reorderQuantity   Int           @default(10)
+  location          String?
+  aisle             String?
+  shelf             String?
+  productType       String?
+  isPerishable      Boolean       @default(false)
+  batchNo           String?
+  manufactureDate   DateTime?
+  expiryDate        DateTime?
+  status            ProductStatus @default(ACTIVE)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  invoiceItems      InvoiceItem[]
+  purchaseItems     PurchaseItem[]
+  movements         StockMovement[]
+
+  @@unique([shopId, sku])
+  @@index([shopId, name])
+  @@index([shopId, status])
+  @@index([shopId, categoryId])
+  @@index([shopId, supplierId])
+  @@index([shopId, productType])
+  @@index([shopId, expiryDate])
+  @@index([shopId, stockQty, reorderLevel])
+  @@index([shopId, createdAt])
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  loyaltyCardNo String?
+  customerType String?
+  area        String?
+  city        String?
+  whatsapp    String?
+  loyaltyPoints Int    @default(0)
+  lastVisitAt DateTime?
+  preferredPaymentMethod PaymentMethod?
+  creditLimit Decimal  @default(0) @db.Decimal(12,2)
+  balance     Decimal  @default(0) @db.Decimal(12,2)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  invoices    Invoice[]
+  payments    Payment[]
+
+  @@index([shopId, name])
+  @@index([shopId, phone])
+  @@index([shopId, loyaltyCardNo])
+  @@index([shopId, customerType])
+  @@index([shopId, area])
+  @@index([shopId, balance])
+  @@index([shopId, createdAt])
+}
+
+model Supplier {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  contactPerson String?
+  paymentTerms String?
+  ntn         String?
+  gstNumber   String?
+  leadTimeDays Int?
+  supplierType String?
+  balance     Decimal  @default(0) @db.Decimal(12,2)
+  reliabilityScore Int @default(80)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products    Product[]
+  purchases   Purchase[]
+  payments    Payment[]
+
+  @@index([shopId, name])
+  @@index([shopId, phone])
+  @@index([shopId, supplierType])
+  @@index([shopId, balance])
+  @@index([shopId, createdAt])
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  shopId      String
+  shop        Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customerId  String?
+  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdById String
+  createdBy   User          @relation("InvoiceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  invoiceNo   String
+  status      InvoiceStatus @default(UNPAID)
+  subtotal    Decimal       @db.Decimal(12,2)
+  discount    Decimal       @default(0) @db.Decimal(12,2)
+  tax         Decimal       @default(0) @db.Decimal(12,2)
+  total       Decimal       @db.Decimal(12,2)
+  paidAmount  Decimal       @default(0) @db.Decimal(12,2)
+  dueAmount   Decimal       @default(0) @db.Decimal(12,2)
+  invoiceDate DateTime      @default(now())
+  dueDate     DateTime?
+  cashierCounter String?
+  channel     String?
+  loyaltyDiscount Decimal   @default(0) @db.Decimal(12,2)
+  promoCode   String?
+  receiptNo   String?
+  paymentBreakdown Json?
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  items       InvoiceItem[]
+  payments    Payment[]
+
+  @@unique([shopId, invoiceNo])
+  @@index([shopId, channel])
+  @@index([shopId, receiptNo])
+  @@index([shopId, status])
+  @@index([shopId, invoiceDate])
+  @@index([shopId, customerId])
+  @@index([shopId, createdAt])
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(12,2)
+  costPrice   Decimal  @db.Decimal(12,2)
+  total       Decimal  @db.Decimal(12,2)
+  createdAt   DateTime @default(now())
+
+  @@index([productId])
+  @@index([invoiceId])
+}
+
+model Purchase {
+  id           String         @id @default(cuid())
+  shopId       String
+  shop         Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  supplierId   String?
+  supplier     Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  createdById  String
+  createdBy    User           @relation("PurchaseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  purchaseNo   String
+  status       PurchaseStatus @default(RECEIVED)
+  subtotal     Decimal        @db.Decimal(12,2)
+  total        Decimal        @db.Decimal(12,2)
+  paidAmount   Decimal        @default(0) @db.Decimal(12,2)
+  dueAmount    Decimal        @default(0) @db.Decimal(12,2)
+  purchaseDate DateTime       @default(now())
+  notes        String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  items        PurchaseItem[]
+  payments     Payment[]
+
+  @@unique([shopId, purchaseNo])
+  @@index([shopId, status])
+  @@index([shopId, supplierId])
+  @@index([shopId, purchaseDate])
+}
+
+model PurchaseItem {
+  id          String   @id @default(cuid())
+  purchaseId  String
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity    Int
+  unitCost    Decimal  @db.Decimal(12,2)
+  total       Decimal  @db.Decimal(12,2)
+  createdAt   DateTime @default(now())
+
+  @@index([purchaseId])
+  @@index([productId])
+}
+
+model Payment {
+  id          String           @id @default(cuid())
+  shopId      String
+  shop        Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customerId  String?
+  customer    Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  supplierId  String?
+  supplier    Supplier?        @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  invoiceId   String?
+  invoice     Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  purchaseId  String?
+  purchase    Purchase?        @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  createdById String
+  createdBy   User             @relation("PaymentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  direction   PaymentDirection
+  method      PaymentMethod    @default(CASH)
+  amount      Decimal          @db.Decimal(12,2)
+  paidAt      DateTime         @default(now())
+  reference   String?
+  notes       String?
+  createdAt   DateTime         @default(now())
+
+  @@index([shopId, direction])
+  @@index([shopId, paidAt])
+  @@index([shopId, customerId])
+  @@index([shopId, supplierId])
+  @@index([shopId, invoiceId])
+  @@index([shopId, purchaseId])
+}
+
+model StockMovement {
+  id          String            @id @default(cuid())
+  shopId      String
+  shop        Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type        StockMovementType
+  quantity    Int
+  beforeQty   Int
+  afterQty    Int
+  reference   String?
+  notes       String?
+  movedAt     DateTime          @default(now())
+  createdAt   DateTime          @default(now())
+
+  @@index([shopId, productId])
+  @@index([shopId, type])
+  @@index([shopId, movedAt])
+  @@index([productId, movedAt])
+}
+
+model AssistantThread {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  title       String
+  mode        String   @default("GENERAL")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages    AssistantMessage[]
+
+  @@index([shopId, createdById])
+  @@index([updatedAt])
+}
+
+model AssistantMessage {
+  id        String   @id @default(cuid())
+  threadId  String
+  thread    AssistantThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  role      String
+  content   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type      String
+  title     String
+  details   String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([shopId, createdAt])
+  @@index([shopId, type])
+}

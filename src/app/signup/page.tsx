@@ -1,0 +1,6 @@
+import Link from "next/link";
+import { SignupForm } from "@/components/auth/signup-form";
+import { Logo } from "@/components/logo";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { UiModeToggle } from "@/components/ui-mode-toggle";
+export default function SignupPage(){return <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[0.95fr_1.05fr]"><div className="flex flex-col justify-between bg-card/70 p-8"><div className="flex items-center justify-between"><Logo/><div className="flex gap-2"><UiModeToggle compact/><ThemeToggle/></div></div><div className="max-w-xl"><p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Start your shop OS</p><h1 className="mt-3 text-4xl font-semibold tracking-tight">Create a secure AI-powered business workspace.</h1><p className="mt-4 text-sm leading-7 text-muted-foreground">Set up inventory, billing, customers, suppliers, payments and AI business intelligence with database-backed workflows.</p></div><p className="text-sm text-muted-foreground">Already have an account? <Link href="/login" className="text-primary underline underline-offset-4">Login</Link></p></div><div className="grid place-items-center p-8"><SignupForm/></div></div>}

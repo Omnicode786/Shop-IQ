@@ -1,0 +1,1 @@
+import { redirect } from "next/navigation";import { getCurrentUser } from "@/lib/auth";import { dashboardForRole, isAdminRole } from "@/lib/workspace";export default async function SettingsRedirect(){const user=await getCurrentUser();redirect(isAdminRole(user?.role)?"/admin/settings":dashboardForRole(user?.role))}
