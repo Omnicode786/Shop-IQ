@@ -1,7 +1,7 @@
 import { DollarSign, Package, ReceiptText, TrendingUp } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
 import { ActivityFeed } from "@/components/workspace/activity-feed";
-import { BubbleInsightCard, RankedBarsCard, RingScoreCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
+import { BubbleInsightCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
 import { DataTable } from "@/components/workspace/data-table";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { SectionHeader } from "@/components/workspace/section-header";
@@ -60,15 +60,7 @@ export default async function StaffDashboard() {
         </Card>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
-        <RingScoreCard
-          title="Service readiness"
-          description="Stock pressure converted into a front-counter readiness score."
-          score={Math.max(0, 100 - snapshot.metrics.stockRiskScore)}
-          value={`${Math.max(0, 100 - snapshot.metrics.stockRiskScore)}%`}
-          label="Ready"
-          badge="Stock"
-        />
+      <div className="mt-6">
         <BubbleInsightCard
           title="Counter board"
           description="Numbers staff need before billing, lookup or customer follow-up."
@@ -96,12 +88,6 @@ export default async function StaffDashboard() {
           </table>
         </DataTable>
         <div className="flex flex-col gap-6">
-          <RankedBarsCard
-            title="Fast movers"
-            description="Products staff are most likely to be asked for."
-            rows={snapshot.fastMoving.map((item: any) => ({ name: item.name, value: item.qty }))}
-            badge="Velocity"
-          />
           <Card className="overflow-hidden">
             <CardContent className="p-5">
               <div className="mb-4">

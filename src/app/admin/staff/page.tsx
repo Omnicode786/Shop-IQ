@@ -1,13 +1,13 @@
 import { UserCog } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
-import { DonutBreakdownCard, RingScoreCard, StackedSignalCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
+import { DonutBreakdownCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { can, canCreateStaffRole, canManageStaffMember } from "@/lib/permissions";
-import { buildDailySeries, statusSegments } from "@/lib/chart-helpers";
+import { statusSegments } from "@/lib/chart-helpers";
 import { prisma } from "@/lib/prisma";
 import { formatDate, toPlain } from "@/lib/utils";
 import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
@@ -19,11 +19,7 @@ export default async function StaffPage() {
   const roleOptions = (["ADMIN", "MANAGER", "STAFF"] as const)
     .filter((role) => canCreateStaffRole(user?.role, role))
     .map((role) => ({ label: role === "ADMIN" ? "Admin" : role === "MANAGER" ? "Manager" : "Staff", value: role }));
-  const activeCount = staff.filter((member: any) => member.status === "ACTIVE").length;
-  const activeScore = Math.round((activeCount / Math.max(staff.length, 1)) * 100);
   const roleRows = statusSegments(staff, (member: any) => member.role);
-  const statusRows = statusSegments(staff, (member: any) => member.status);
-  const joinedTrend = buildDailySeries(staff, (member: any) => member.createdAt, () => 1, 14);
 
   return (
     <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "staff")} user={user}>
@@ -55,15 +51,7 @@ export default async function StaffPage() {
       <div className="mt-6">
         <MetricCard icon={UserCog} title="Team members" value={staff.length} />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.8fr_0.9fr_1.1fr]">
-        <RingScoreCard
-          title="Access health"
-          description="Active accounts compared with total staff records."
-          score={activeScore}
-          value={`${activeScore}%`}
-          label="Active"
-          badge="Access"
-        />
+      <div className="mt-6">
         <DonutBreakdownCard
           title="Role mix"
           description="Admin, manager and staff coverage in this workspace."
@@ -71,24 +59,6 @@ export default async function StaffPage() {
           centerValue={`${staff.length}`}
           centerLabel="Members"
           badge="Roles"
-        />
-        <TrendAreaCard
-          title="Join rhythm"
-          description="Recent team additions over the latest window."
-          value={`${staff.length} members`}
-          caption={`${activeCount} active accounts`}
-          data={joinedTrend}
-          badge="Team"
-          format="number"
-        />
-      </div>
-      <div className="mt-6">
-        <StackedSignalCard
-          title="Account status"
-          description="Active, invited and suspended accounts at a glance."
-          data={statusRows}
-          totalLabel={`${staff.length} accounts`}
-          badge="Status"
         />
       </div>
       <div className="mt-6">

@@ -1,6 +1,6 @@
 import { Settings as SettingsIcon } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
-import { BubbleInsightCard, RingScoreCard, StackedSignalCard } from "@/components/workspace/analytics-cards";
+import { RingScoreCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
@@ -53,7 +53,7 @@ export default async function Settings() {
       <div className="mt-6">
         <MetricCard icon={SettingsIcon} title="Workspace" value={shop.name} helper={`${shop.city} - ${shop.currency}`} />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
+      <div className="mt-6">
         <RingScoreCard
           title="Profile readiness"
           description="Completeness of the shop information used by invoices and reports."
@@ -61,29 +61,6 @@ export default async function Settings() {
           value={`${completeness}%`}
           label="Ready"
           badge="Config"
-        />
-        <StackedSignalCard
-          title="Profile state"
-          description="Complete fields versus missing details."
-          data={[
-            { name: "Complete", value: completeFields },
-            { name: "Missing", value: profileFields.length - completeFields }
-          ]}
-          totalLabel={`${completeFields}/${profileFields.length} ready`}
-          badge="Readiness"
-        />
-      </div>
-      <div className="mt-6">
-        <BubbleInsightCard
-          title="Workspace identity board"
-          description="The core profile values that appear across ShopIQ."
-          bubbles={[
-            { label: "Shop", value: shop.name || "Unset", size: "lg" },
-            { label: "City", value: shop.city || "Unset", size: "md" },
-            { label: "Currency", value: shop.currency || "Unset", size: "sm" },
-            { label: "Phone", value: shop.phone || "Unset", size: "sm" }
-          ]}
-          badge="Identity"
         />
       </div>
       <div className="mt-6">

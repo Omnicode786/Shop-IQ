@@ -1,6 +1,6 @@
 import { Users, WalletCards } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
-import { BubbleInsightCard, RankedBarsCard, RingScoreCard, StackedSignalCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
+import { RankedBarsCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
@@ -33,12 +33,9 @@ export default async function Customers() {
     creditLimitDisplay: money(customer.creditLimit)
   }));
   const dues = customers.reduce((sum: number, customer: any) => sum + Math.max(Number(customer.balance), 0), 0);
-  const creditLimit = customers.reduce((sum: number, customer: any) => sum + Number(customer.creditLimit), 0);
   const allPayments = customers.flatMap((customer: any) => customer.payments || []);
   const paymentTrend = buildDailySeries(allPayments, (payment: any) => payment.paidAt, (payment: any) => Number(payment.amount), 14);
   const dueRank = topRows(customers, (customer: any) => customer.name, (customer: any) => Number(customer.balance), 6);
-  const utilization = Math.min(100, Math.round((dues / Math.max(creditLimit, 1)) * 100));
-  const receivableHealth = Math.max(0, 100 - utilization);
 
   return (
     <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "customers")} user={user}>
@@ -71,15 +68,7 @@ export default async function Customers() {
         <MetricCard icon={Users} title="Customers" value={customers.length} />
         <MetricCard icon={WalletCards} title="Outstanding receivables" value={money(dues)} tone="amber" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.8fr_1.2fr_0.95fr]">
-        <RingScoreCard
-          title="Receivable health"
-          description="Lower credit utilization keeps follow-ups calm and predictable."
-          score={receivableHealth}
-          value={`${receivableHealth}%`}
-          label="Healthy"
-          badge="Credit"
-        />
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
         <TrendAreaCard
           title="Collection rhythm"
           description="Customer payments received across the latest activity window."
@@ -88,29 +77,6 @@ export default async function Customers() {
           data={paymentTrend}
           badge="Receipts"
           format="money"
-        />
-        <StackedSignalCard
-          title="Credit utilization"
-          description="Used receivable balance against configured customer limits."
-          data={[
-            { name: "Used", value: dues },
-            { name: "Available", value: Math.max(0, creditLimit - dues) }
-          ]}
-          totalLabel={`${utilization}% used`}
-          badge="Limit"
-        />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
-        <BubbleInsightCard
-          title="Customer board"
-          description="Compact commercial context for account and collection decisions."
-          bubbles={[
-            { label: "Accounts", value: customers.length, size: "lg" },
-            { label: "Receivable", value: compactMoney(dues), size: "md" },
-            { label: "Avg balance", value: compactMoney(customers.length ? dues / customers.length : 0), size: "sm" },
-            { label: "With invoices", value: customers.filter((customer: any) => customer.invoiceCount > 0).length, size: "sm" }
-          ]}
-          badge="Accounts"
         />
         <RankedBarsCard
           title="Top receivables"

@@ -167,7 +167,7 @@ export function TrendAreaCard({
             <ArrowUpRight className="size-4" />
           </span>
         </div>
-        <div className="h-52">
+        <div className="analytics-chart-frame analytics-chart-frame-sm">
           {chartData.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 12, right: 6, bottom: 0, left: -16 }}>
@@ -219,7 +219,7 @@ export function ComparativeBarsCard({
     <Card className="analytics-card overflow-hidden">
       <ChartHeader title={title} description={description} badge={badge} />
       <CardContent className="p-5 pt-0">
-        <div className="h-64">
+        <div className="analytics-chart-frame analytics-chart-frame-md">
           {chartData.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} barCategoryGap="24%" margin={{ top: 16, right: 8, bottom: 6, left: -16 }}>

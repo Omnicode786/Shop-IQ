@@ -1,13 +1,13 @@
 import { Truck } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
-import { DonutBreakdownCard, RankedBarsCard, StackedSignalCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
+import { DonutBreakdownCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { buildDailySeries, statusSegments, sumByGroup } from "@/lib/chart-helpers";
+import { buildDailySeries, statusSegments } from "@/lib/chart-helpers";
 import { prisma } from "@/lib/prisma";
 import { formatDate, toPlain } from "@/lib/utils";
 import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
@@ -38,11 +38,9 @@ export default async function Purchases() {
   const suppliers = toPlain(suppliersRaw);
   const products = toPlain(productsRaw);
   const total = purchases.reduce((sum: number, purchase: any) => sum + Number(purchase.total), 0);
-  const paid = purchases.reduce((sum: number, purchase: any) => sum + Number(purchase.paidAmount || 0), 0);
   const due = purchases.reduce((sum: number, purchase: any) => sum + Number(purchase.dueAmount || 0), 0);
   const purchaseTrend = buildDailySeries(purchases, (purchase: any) => purchase.purchaseDate, (purchase: any) => Number(purchase.total), 14);
   const statusRows = statusSegments(purchases, (purchase: any) => purchase.status);
-  const supplierSpend = sumByGroup(purchases, (purchase: any) => purchase.supplierName, (purchase: any) => Number(purchase.total), 6);
 
   return (
     <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "purchases")} user={user}>
@@ -71,11 +69,12 @@ export default async function Purchases() {
           ]}
         />
       </div>
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
         <MetricCard icon={Truck} title="Purchases" value={purchases.length} />
         <MetricCard icon={Truck} title="Purchased value" value={money(total)} tone="violet" />
+        <MetricCard icon={Truck} title="Open payable" value={money(due)} tone="rose" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr_0.9fr]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <TrendAreaCard
           title="Purchase rhythm"
           description="Stock intake value across the latest purchasing window."
@@ -92,25 +91,6 @@ export default async function Purchases() {
           centerValue={`${purchases.length}`}
           centerLabel="Purchases"
           badge="Status"
-        />
-        <StackedSignalCard
-          title="Paid versus due"
-          description="How much purchasing value is settled versus outstanding."
-          data={[
-            { name: "Paid", value: paid },
-            { name: "Due", value: due }
-          ]}
-          totalLabel={compactMoney(total)}
-          badge="Payable"
-        />
-      </div>
-      <div className="mt-6">
-        <RankedBarsCard
-          title="Supplier spend"
-          description="Suppliers ranked by purchase value in the current operating view."
-          rows={supplierSpend}
-          format="money"
-          badge="Spend"
         />
       </div>
       <div className="mt-6">

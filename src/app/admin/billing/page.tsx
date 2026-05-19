@@ -1,13 +1,13 @@
 import { ReceiptText } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
-import { DonutBreakdownCard, RankedBarsCard, StackedSignalCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
+import { DonutBreakdownCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { buildDailySeries, statusSegments, sumByGroup } from "@/lib/chart-helpers";
+import { buildDailySeries, statusSegments } from "@/lib/chart-helpers";
 import { prisma } from "@/lib/prisma";
 import { formatDate, toPlain } from "@/lib/utils";
 import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
@@ -41,10 +41,8 @@ export default async function Billing() {
   const products = toPlain(productsRaw);
   const total = invoices.reduce((sum: number, invoice: any) => sum + Number(invoice.total), 0);
   const due = invoices.reduce((sum: number, invoice: any) => sum + Number(invoice.dueAmount || 0), 0);
-  const paid = invoices.reduce((sum: number, invoice: any) => sum + Number(invoice.paidAmount || 0), 0);
   const invoiceTrend = buildDailySeries(invoices, (invoice: any) => invoice.invoiceDate, (invoice: any) => Number(invoice.total), 14);
   const statusRows = statusSegments(invoices, (invoice: any) => invoice.status);
-  const customerRevenue = sumByGroup(invoices, (invoice: any) => invoice.customerName, (invoice: any) => Number(invoice.total), 6);
 
   return (
     <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "billing")} user={user}>
@@ -73,11 +71,12 @@ export default async function Billing() {
           ]}
         />
       </div>
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
         <MetricCard icon={ReceiptText} title="Invoices" value={invoices.length} />
         <MetricCard icon={ReceiptText} title="Gross billed" value={money(total)} tone="emerald" />
+        <MetricCard icon={ReceiptText} title="Open due" value={money(due)} tone="amber" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr_0.9fr]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <TrendAreaCard
           title="Billing rhythm"
           description="Gross invoice value across the latest sales window."
@@ -94,25 +93,6 @@ export default async function Billing() {
           centerValue={`${invoices.length}`}
           centerLabel="Invoices"
           badge="Status"
-        />
-        <StackedSignalCard
-          title="Paid versus due"
-          description="The practical cash state behind gross billed value."
-          data={[
-            { name: "Paid", value: paid },
-            { name: "Due", value: due }
-          ]}
-          totalLabel={compactMoney(total)}
-          badge="Cash"
-        />
-      </div>
-      <div className="mt-6">
-        <RankedBarsCard
-          title="Customer revenue leaders"
-          description="Customers contributing the highest billed value in this view."
-          rows={customerRevenue}
-          format="money"
-          badge="Revenue"
         />
       </div>
       <div className="mt-6">

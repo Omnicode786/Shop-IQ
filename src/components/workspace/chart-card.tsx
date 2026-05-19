@@ -52,7 +52,7 @@ export function BarChartCard({ title, data, xKey = "name", yKey = "qty" }: { tit
         </div>
       </CardHeader>
       <CardContent className="p-5 pt-0">
-        <div className="h-72">
+        <div className="analytics-chart-frame analytics-chart-frame-lg">
           {safeData.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={safeData} barCategoryGap="24%" margin={{ top: 16, right: 8, bottom: 8, left: -12 }}>
@@ -94,7 +94,7 @@ export function PieChartCard({ title, data }: { title: string; data: any[] }) {
         </div>
       </CardHeader>
       <CardContent className="p-5 pt-0">
-        <div className="relative h-72">
+        <div className="analytics-chart-frame analytics-chart-frame-lg relative">
           {safeData.length ? (
             <>
               <ResponsiveContainer width="100%" height="100%">

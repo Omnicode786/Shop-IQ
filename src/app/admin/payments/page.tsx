@@ -1,6 +1,6 @@
 import { CreditCard } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
-import { ComparativeBarsCard, DonutBreakdownCard, RankedBarsCard, StackedSignalCard } from "@/components/workspace/analytics-cards";
+import { ComparativeBarsCard, DonutBreakdownCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
@@ -51,7 +51,6 @@ export default async function Payments() {
     (payment: any) => payment.direction === "SUPPLIER_OUT" ? Number(payment.amount) : 0
   );
   const methodMix = sumByGroup(payments, (payment: any) => payment.method?.replace(/_/g, " "), (payment: any) => Number(payment.amount), 7);
-  const partyRank = sumByGroup(payments, (payment: any) => payment.partyName, (payment: any) => Number(payment.amount), 6);
   const directionOptions = [
     { label: "Customer in", value: "CUSTOMER_IN" },
     ...(canUsePaymentDirection(user?.role, "SUPPLIER_OUT") ? [{ label: "Supplier out", value: "SUPPLIER_OUT" }] : [])
@@ -95,11 +94,12 @@ export default async function Payments() {
           ]}
         />
       </div>
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
         <MetricCard icon={CreditCard} title="Incoming" value={money(incoming)} tone="emerald" />
         <MetricCard icon={CreditCard} title={canSeeSupplierSide ? "Outgoing" : "Receipt-only mode"} value={canSeeSupplierSide ? money(outgoing) : "Customer in"} tone={canSeeSupplierSide ? "rose" : "violet"} />
+        <MetricCard icon={CreditCard} title="Net movement" value={money(incoming - outgoing)} tone="amber" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr_0.9fr]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <ComparativeBarsCard
           title="Settlement rhythm"
           description={canSeeSupplierSide ? "Receipts and payouts in the same view, so cash movement is easy to read." : "Customer receipts across the latest operating window."}
@@ -117,25 +117,6 @@ export default async function Payments() {
           centerLabel="Moved"
           badge="Methods"
           format="money"
-        />
-        <StackedSignalCard
-          title="Direction split"
-          description={canSeeSupplierSide ? "Customer receipts compared with supplier payouts." : "This role is scoped to customer receipts."}
-          data={[
-            { name: "Incoming", value: incoming },
-            { name: "Outgoing", value: outgoing }
-          ]}
-          totalLabel={compactMoney(incoming - outgoing)}
-          badge="Net"
-        />
-      </div>
-      <div className="mt-6">
-        <RankedBarsCard
-          title="Party movement"
-          description="Parties associated with the highest cash movement in this view."
-          rows={partyRank}
-          format="money"
-          badge="Parties"
         />
       </div>
       <div className="mt-6">

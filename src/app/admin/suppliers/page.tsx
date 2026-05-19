@@ -1,12 +1,12 @@
 import { Truck, WalletCards } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
-import { BubbleInsightCard, RankedBarsCard, RingScoreCard, StackedSignalCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
+import { RankedBarsCard, RingScoreCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
-import { buildDailySeries, topRows } from "@/lib/chart-helpers";
+import { topRows } from "@/lib/chart-helpers";
 import { can } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { toPlain } from "@/lib/utils";
@@ -14,10 +14,6 @@ import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
 function money(value: any) {
   return `PKR ${Number(value || 0).toLocaleString()}`;
-}
-
-function compactMoney(value: number) {
-  return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
 }
 
 export default async function Suppliers() {
@@ -33,14 +29,7 @@ export default async function Suppliers() {
   }));
   const dues = suppliers.reduce((sum: number, supplier: any) => sum + Math.max(Number(supplier.balance), 0), 0);
   const avgReliability = Math.round(suppliers.reduce((sum: number, supplier: any) => sum + Number(supplier.reliabilityScore || 0), 0) / Math.max(suppliers.length, 1));
-  const allPurchases = suppliers.flatMap((supplier: any) => supplier.purchases || []);
-  const purchaseTrend = buildDailySeries(allPurchases, (purchase: any) => purchase.purchaseDate, (purchase: any) => Number(purchase.total), 14);
   const payableRank = topRows(suppliers, (supplier: any) => supplier.name, (supplier: any) => Number(supplier.balance), 6);
-  const reliabilitySegments = [
-    { name: "Excellent", value: suppliers.filter((supplier: any) => Number(supplier.reliabilityScore || 0) >= 85).length },
-    { name: "Good", value: suppliers.filter((supplier: any) => Number(supplier.reliabilityScore || 0) >= 70 && Number(supplier.reliabilityScore || 0) < 85).length },
-    { name: "Watch", value: suppliers.filter((supplier: any) => Number(supplier.reliabilityScore || 0) < 70).length }
-  ];
 
   return (
     <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "suppliers")} user={user}>
@@ -73,7 +62,7 @@ export default async function Suppliers() {
         <MetricCard icon={Truck} title="Suppliers" value={suppliers.length} />
         <MetricCard icon={WalletCards} title="Payables" value={money(dues)} tone="rose" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr_0.9fr]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
         <RingScoreCard
           title="Reliability pulse"
           description="Average supplier reliability across active vendor accounts."
@@ -81,35 +70,6 @@ export default async function Suppliers() {
           value={`${avgReliability}%`}
           label="Reliable"
           badge="Supply"
-        />
-        <TrendAreaCard
-          title="Purchase rhythm"
-          description="Supplier purchase value across the latest intake window."
-          value={compactMoney(allPurchases.reduce((sum: number, purchase: any) => sum + Number(purchase.total), 0))}
-          caption="Recent purchase value"
-          data={purchaseTrend}
-          badge="Intake"
-          format="money"
-        />
-        <StackedSignalCard
-          title="Reliability bands"
-          description="Supplier accounts grouped by the score you can act on."
-          data={reliabilitySegments}
-          totalLabel={`${suppliers.length} suppliers`}
-          badge="Bands"
-        />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
-        <BubbleInsightCard
-          title="Supplier board"
-          description="The vendor metrics managers usually need before purchasing."
-          bubbles={[
-            { label: "Suppliers", value: suppliers.length, size: "lg" },
-            { label: "Payables", value: compactMoney(dues), size: "md" },
-            { label: "Linked", value: suppliers.filter((supplier: any) => supplier.purchaseCount > 0).length, size: "sm" },
-            { label: "Avg score", value: `${avgReliability}%`, size: "sm" }
-          ]}
-          badge="Vendors"
         />
         <RankedBarsCard
           title="Top payables"

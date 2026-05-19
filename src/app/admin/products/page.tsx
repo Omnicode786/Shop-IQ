@@ -1,11 +1,11 @@
 import { AlertTriangle, Boxes, Package } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
-import { DonutBreakdownCard, RankedBarsCard, RingScoreCard, StackedSignalCard } from "@/components/workspace/analytics-cards";
+import { DonutBreakdownCard, RingScoreCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
-import { statusSegments, sumByGroup, topRows } from "@/lib/chart-helpers";
+import { sumByGroup } from "@/lib/chart-helpers";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
@@ -44,8 +44,6 @@ export default async function ProductsPage() {
   const low = activeProducts.filter((product: any) => product.stockQty <= product.reorderLevel);
   const healthScore = Math.max(0, 100 - Math.round((low.length / Math.max(activeProducts.length, 1)) * 100));
   const categoryValue = sumByGroup(activeProducts, (product: any) => product.categoryName, (product: any) => product.stockQty * Number(product.costPrice), 8);
-  const marginRows = topRows(activeProducts, (product: any) => product.name, (product: any) => Math.max(0, Number(product.salePrice) - Number(product.costPrice)) * product.stockQty, 6);
-  const statusRows = statusSegments(products, (product: any) => product.status);
   const nav = workspaceNav(user?.role);
   const currentPath = workspacePath(user?.role, "products");
 
@@ -81,7 +79,7 @@ export default async function ProductsPage() {
         <MetricCard icon={Boxes} title="Inventory value" value={money(value)} tone="violet" />
         <MetricCard icon={AlertTriangle} title="Low stock" value={low.length} tone="amber" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.8fr_1.05fr_1fr]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
         <RingScoreCard
           title="Stock health"
           description="A single read on reorder pressure across active inventory."
@@ -97,22 +95,6 @@ export default async function ProductsPage() {
           centerValue={compactMoney(value)}
           centerLabel="Stock value"
           format="money"
-        />
-        <StackedSignalCard
-          title="Catalog status"
-          description="Active and archived records in the inventory master."
-          data={statusRows}
-          totalLabel={`${products.length} product records`}
-          badge="Catalog"
-        />
-      </div>
-      <div className="mt-6">
-        <RankedBarsCard
-          title="Margin inventory leaders"
-          description="Products with the largest potential gross margin currently sitting in stock."
-          rows={marginRows}
-          format="money"
-          badge="Margin"
         />
       </div>
       <div className="mt-6">

@@ -7,8 +7,6 @@ import {
   ComparativeBarsCard,
   DonutBreakdownCard,
   RankedBarsCard,
-  RingScoreCard,
-  StackedSignalCard,
   TrendAreaCard
 } from "@/components/workspace/analytics-cards";
 import { DataTable } from "@/components/workspace/data-table";
@@ -196,14 +194,7 @@ export default async function AdminDashboard() {
         <MetricCard icon={ReceiptText} title="Stock risk" value={`${snapshot.metrics.stockRiskScore}%`} helper={`${snapshot.metrics.lowStockCount} products below threshold`} tone="amber" />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr_0.9fr]">
-        <RingScoreCard
-          title="Inventory confidence"
-          description="Combines stock risk and active SKU coverage into a quick operating score."
-          score={Math.max(0, 100 - snapshot.metrics.stockRiskScore)}
-          value={`${Math.max(0, 100 - snapshot.metrics.stockRiskScore)}%`}
-          label="Healthy"
-        />
+      <div className="mt-6">
         <TrendAreaCard
           title="Revenue rhythm"
           description="Daily gross sales over the active trading window."
@@ -212,12 +203,6 @@ export default async function AdminDashboard() {
           data={snapshot.charts.revenueTimeline}
           badge="14 days"
           format="money"
-        />
-        <StackedSignalCard
-          title="Invoice state"
-          description="How recent invoices are distributed by settlement status."
-          data={snapshot.charts.invoiceStatus}
-          totalLabel={`${snapshot.invoices.length} latest invoices`}
         />
       </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -11,6 +11,7 @@ import {
   CreditCard,
   FileBarChart,
   LogOut,
+  Menu,
   Package,
   PanelLeftClose,
   PanelLeftOpen,
@@ -19,7 +20,8 @@ import {
   ShoppingCart,
   Truck,
   Users,
-  UserCog
+  UserCog,
+  X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -168,28 +170,120 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
 }
 
 export function MobileNav({ nav, currentPath }: { nav: NavItem[]; currentPath?: string }) {
-  return (
-    <nav className="shopiq-mobile-nav fixed inset-x-3 bottom-3 z-40 flex gap-1.5 overflow-x-auto rounded-[1.5rem] border p-2 lg:hidden" aria-label="Mobile navigation">
-      {nav.map((item) => {
-        const active = isActive(item, currentPath);
-        const Icon = iconFor(item);
+  const [open, setOpen] = useState(false);
+  const current = activeItem(nav, currentPath);
+  const CurrentIcon = iconFor(current);
+  const quickItems = useMemo(() => {
+    const preferred = ["dashboard", "billing", "products", "assistant"];
+    const selected = preferred
+      .map((key) => nav.find((item) => `${item.href} ${item.label}`.toLowerCase().includes(key)))
+      .filter(Boolean) as NavItem[];
+    return Array.from(new Map([current, ...selected, ...nav.slice(0, 4)].map((item) => [item.href, item])).values()).slice(0, 4);
+  }, [current, nav]);
 
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-label={item.label}
-            title={item.label}
-            className={cn(
-              "mobile-nav-link flex h-12 flex-none items-center justify-center gap-2 rounded-2xl px-3 text-[11px] font-medium transition",
-              active ? "is-active min-w-[5.4rem] bg-primary text-primary-foreground shadow-sm" : "min-w-12 text-muted-foreground hover:bg-muted/70 hover:text-foreground"
-            )}
-          >
-            <Icon className="size-4" />
-            {active ? <span className="hidden max-w-14 truncate min-[360px]:inline">{shortLabel(item.label)}</span> : null}
-          </Link>
-        );
-      })}
-    </nav>
+  useEffect(() => {
+    if (!open) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [currentPath]);
+
+  return (
+    <>
+      <div className="shopiq-mobile-dock fixed inset-x-3 z-40 lg:hidden" aria-label="Mobile navigation">
+        <button type="button" className="mobile-menu-trigger" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-expanded={open} aria-controls="shopiq-mobile-sidebar">
+          <span className="mobile-menu-trigger-icon">
+            <Menu className="size-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="mobile-menu-trigger-kicker">Menu</span>
+            <span className="mobile-menu-trigger-label">{shortLabel(current.label)}</span>
+          </span>
+        </button>
+        <div className="mobile-dock-quick" aria-label="Quick destinations">
+          {quickItems.slice(0, 3).map((item) => {
+            const active = isActive(item, currentPath);
+            const Icon = iconFor(item);
+            return (
+              <Link key={item.href} href={item.href} aria-label={item.label} title={item.label} className={cn("mobile-dock-link", active && "is-active")}>
+                <Icon className="size-4" />
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className={cn("mobile-sidebar-layer fixed inset-0 z-50 lg:hidden", open && "is-open")} aria-hidden={!open}>
+        <button type="button" className="mobile-sidebar-backdrop" aria-label="Close navigation" tabIndex={open ? 0 : -1} onClick={() => setOpen(false)} />
+        <aside id="shopiq-mobile-sidebar" role="dialog" aria-modal="true" aria-label="ShopIQ mobile navigation" className="mobile-sidebar-panel">
+          <div className="mobile-sidebar-top">
+            <div className="mobile-sidebar-brand">
+              <span className="mobile-sidebar-mark">
+                <Image src="/favicon.png" alt="ShopIQ" width={512} height={512} priority className="h-full w-full object-contain" />
+              </span>
+              <span className="min-w-0">
+                <span className="mobile-sidebar-kicker">ShopIQ workspace</span>
+                <span className="mobile-sidebar-title">{shortLabel(current.label)}</span>
+              </span>
+            </div>
+            <button type="button" className="mobile-sidebar-close" onClick={() => setOpen(false)} aria-label="Close navigation">
+              <X className="size-5" />
+            </button>
+          </div>
+
+          <div className="mobile-sidebar-current">
+            <div className="mobile-sidebar-current-icon">
+              <CurrentIcon className="size-6" />
+            </div>
+            <div className="min-w-0">
+              <p>Now viewing</p>
+              <strong>{current.label}</strong>
+            </div>
+          </div>
+
+          <nav className="mobile-sidebar-nav" aria-label="Workspace destinations">
+            {nav.map((item, index) => {
+              const active = isActive(item, currentPath);
+              const Icon = iconFor(item);
+
+              return (
+                <Link key={item.href} href={item.href} onClick={() => setOpen(false)} className={cn("mobile-sidebar-link", active && "is-active")} style={{ ["--item-delay" as string]: `${index * 24}ms` }}>
+                  <span className="mobile-sidebar-link-icon">
+                    <Icon className="size-5" />
+                  </span>
+                  <span className="truncate">{item.label}</span>
+                  {active ? <span className="mobile-sidebar-active-dot" /> : null}
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div className="mobile-sidebar-quick">
+            <p>Quick go to</p>
+            <div>
+              {quickItems.map((item) => {
+                const active = isActive(item, currentPath);
+                const Icon = iconFor(item);
+                return (
+                  <Link key={item.href} href={item.href} onClick={() => setOpen(false)} className={cn("mobile-sidebar-quick-link", active && "is-active")} aria-label={item.label} title={item.label}>
+                    <Icon className="size-4" />
+                    <span>{shortLabel(item.label)}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+      </div>
+    </>
   );
 }
