@@ -21,7 +21,7 @@ type ChatMessage = {
   isTyping?: boolean;
 };
 
-const USER_MESSAGE_LAND_MS = 500;
+const USER_MESSAGE_LAND_MS = 420;
 
 function actionLabel(type?: string) {
   if (type === "create_product") return "Product preview";
@@ -62,13 +62,16 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
 
   useEffect(() => {
     const timers = typingTimers.current;
+    const choreography = choreographyTimers.current;
+    const frames = scrollFrames.current;
+
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer));
       timers.clear();
-      choreographyTimers.current.forEach((timer) => window.clearTimeout(timer));
-      choreographyTimers.current.clear();
-      scrollFrames.current.forEach((frame) => window.cancelAnimationFrame(frame));
-      scrollFrames.current.clear();
+      choreography.forEach((timer) => window.clearTimeout(timer));
+      choreography.clear();
+      frames.forEach((frame) => window.cancelAnimationFrame(frame));
+      frames.clear();
     };
   }, []);
 

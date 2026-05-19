@@ -26,12 +26,26 @@ const badgeVariants = cva(
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof badgeVariants> {}
 
+function isEmptyNode(node: React.ReactNode): boolean {
+  if (node === null || node === undefined || typeof node === "boolean") return true;
+  if (typeof node === "string") return node.trim().length === 0;
+  if (typeof node === "number") return false;
+  if (Array.isArray(node)) return node.every(isEmptyNode);
+  return false;
+}
+
+function nodeTitle(node: React.ReactNode) {
+  if (typeof node === "string" || typeof node === "number") return String(node).trim();
+  return undefined;
+}
+
 export function Badge({
   className,
   variant,
   onPointerEnter,
   onPointerLeave,
   onPointerMove,
+  title,
   children,
   ...props
 }: BadgeProps) {
@@ -40,10 +54,14 @@ export function Badge({
     resetLiquidBorderGlow,
     updateLiquidBorderGlow
   } = useLiquidBorderGlow<HTMLDivElement>();
+  const derivedTitle = title ?? nodeTitle(children);
+
+  if (isEmptyNode(children)) return null;
 
   return (
     <div
       ref={ref}
+      title={derivedTitle || undefined}
       className={cn(
         badgeVariants({ variant }),
         "liquid-border-glow text-wrap-safe whitespace-normal",
@@ -63,7 +81,7 @@ export function Badge({
       }}
       {...props}
     >
-      <span className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{children}</span>
+      <span className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{children}</span>
     </div>
   );
 }

@@ -15,6 +15,11 @@ type Insight = {
 
 const bars = [48, 64, 52, 76, 58, 88, 68, 82, 56, 72, 61, 91];
 
+function cleanText(value: unknown) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
 export function ModuleHero({
   eyebrow,
   title,
@@ -30,14 +35,20 @@ export function ModuleHero({
   stats?: Stat[];
   badge?: string;
 }) {
+  const cleanEyebrow = cleanText(eyebrow);
+  const cleanBadge = cleanText(badge);
+  const visibleStats = stats
+    .map((stat) => ({ label: cleanText(stat.label), value: cleanText(stat.value) }))
+    .filter((stat) => stat.label && stat.value);
+
   return (
     <Card className="module-hero overflow-hidden">
       <CardContent className="relative p-6">
         <div className="relative z-10 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
             <div className="mb-4 flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="hero-badge">{eyebrow}</Badge>
-              <Badge variant="secondary">{badge}</Badge>
+              {cleanEyebrow ? <Badge variant="outline" className="hero-badge">{cleanEyebrow}</Badge> : null}
+              {cleanBadge ? <Badge variant="secondary">{cleanBadge}</Badge> : null}
             </div>
             <div className="flex items-start gap-4">
               <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-white">
@@ -55,14 +66,14 @@ export function ModuleHero({
             <p className="mt-2 text-xs text-white/58">Role-aware operations</p>
           </div>
         </div>
-        {stats.length ? (
+        {visibleStats.length ? (
           <div className="relative z-10 mt-6 grid gap-3 md:grid-cols-3">
-            {stats.slice(0, 3).map((stat) => (
+            {visibleStats.slice(0, 3).map((stat) => (
               <div key={stat.label} className="module-stat">
                 <ArrowUpRight className="size-4" />
-                <div>
-                  <p>{stat.label}</p>
-                  <strong>{stat.value}</strong>
+                <div className="min-w-0">
+                  <p title={stat.label}>{stat.label}</p>
+                  <strong title={stat.value}>{stat.value}</strong>
                 </div>
               </div>
             ))}
@@ -89,6 +100,10 @@ export function ModuleInsightPanel({
   icon: LucideIcon;
   insights: Insight[];
 }) {
+  const visibleInsights = insights
+    .map((insight) => ({ label: cleanText(insight.label), value: cleanText(insight.value) }))
+    .filter((insight) => insight.label && insight.value);
+
   return (
     <Card className="module-side-panel overflow-hidden">
       <CardContent className="p-5">
@@ -103,10 +118,10 @@ export function ModuleInsightPanel({
           </div>
         </div>
         <div className="mt-5 flex flex-col gap-3">
-          {insights.map((insight) => (
+          {visibleInsights.map((insight) => (
             <div key={insight.label} className="module-line">
-              <span>{insight.label}</span>
-              <strong>{insight.value}</strong>
+              <span title={insight.label}>{insight.label}</span>
+              <strong title={insight.value}>{insight.value}</strong>
             </div>
           ))}
         </div>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -11,7 +12,6 @@ import {
   FileBarChart,
   LogOut,
   Package,
-  PackageCheck,
   PanelLeftClose,
   PanelLeftOpen,
   ReceiptText,
@@ -77,7 +77,7 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
       <div className={cn("sidebar-shell nav-surface", collapsed && "is-collapsed")}>
         <div className="sidebar-rail" aria-label="Primary workspace shortcuts">
           <Link href="/" className="sidebar-mark" aria-label="ShopIQ home">
-            <PackageCheck className="size-5" />
+            <Image src="/favicon.png" alt="ShopIQ" width={512} height={512} priority className="h-full w-full object-contain" />
           </Link>
 
           <div className="sidebar-rail-links">
@@ -106,9 +106,8 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
         {!collapsed ? (
           <div className="sidebar-panel">
             <div className="sidebar-brand">
-              <div>
-                <p className="sidebar-brand-title">ShopIQ</p>
-                <p className="sidebar-brand-subtitle">Retail operating system</p>
+              <div className="sidebar-brand-logo" aria-label="ShopIQ retail operating system">
+                <Image src="/logo.png" alt="ShopIQ" width={1086} height={304} priority className="h-full w-full object-contain" />
               </div>
               <div className="sidebar-live-dot" aria-hidden="true" />
             </div>

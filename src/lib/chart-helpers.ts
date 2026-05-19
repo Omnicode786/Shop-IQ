@@ -28,6 +28,11 @@ export function percent(part: number, total: number) {
   return Math.round((part / total) * 100);
 }
 
+function cleanLabel(value: string | null | undefined, fallback: string) {
+  const label = String(value ?? "").trim();
+  return label || fallback;
+}
+
 function resolveSeriesWindow<T>(rows: T[], getDate: (row: T) => string | Date, days: number) {
   const now = new Date();
   const currentStart = startOfDay(subDays(now, days - 1));
@@ -80,7 +85,7 @@ export function buildDailySeries<T>(
 export function statusSegments<T>(rows: T[], getStatus: (row: T) => string | null | undefined) {
   const map = new Map<string, number>();
   for (const row of rows) {
-    const status = (getStatus(row) || "Unknown").replace(/_/g, " ").toLowerCase();
+    const status = cleanLabel(getStatus(row), "Unknown").replace(/_/g, " ").toLowerCase();
     const label = status.replace(/\b\w/g, (match) => match.toUpperCase());
     map.set(label, (map.get(label) || 0) + 1);
   }
@@ -95,8 +100,10 @@ export function sumByGroup<T>(
 ) {
   const map = new Map<string, number>();
   for (const row of rows) {
-    const name = getName(row) || "General";
-    map.set(name, (map.get(name) || 0) + getValue(row));
+    const name = cleanLabel(getName(row), "General");
+    const value = Number(getValue(row) || 0);
+    if (value <= 0) continue;
+    map.set(name, (map.get(name) || 0) + value);
   }
   return [...map.entries()]
     .map(([name, value]) => ({ name, value }))
@@ -111,14 +118,19 @@ export function topRows<T>(
   take = 6
 ) {
   return rows
-    .map((row) => ({ name: getName(row), value: getValue(row) }))
+    .map((row) => ({ name: cleanLabel(getName(row), "Untitled"), value: Number(getValue(row) || 0) }))
+    .filter((row) => row.value > 0)
     .sort((a, b) => b.value - a.value)
     .slice(0, take);
 }
 
 export function stackedSegments(data: SegmentDatum[]) {
-  const total = data.reduce((sum, item) => sum + item.value, 0);
-  return data.map((item) => ({
+  const visible = data
+    .map((item) => ({ name: cleanLabel(item.name, "Untitled"), value: Number(item.value || 0) }))
+    .filter((item) => item.value > 0);
+  const total = visible.reduce((sum, item) => sum + item.value, 0);
+
+  return visible.map((item) => ({
     ...item,
     percent: percent(item.value, total)
   }));

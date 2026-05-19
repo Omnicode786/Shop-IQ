@@ -984,3 +984,409 @@ ORDER BY "movedAt" DESC;
 - Run `npx prisma validate` after schema edits.
 - Run `npx prisma generate` after schema changes.
 
+## 18. DDL And DML Statements In ShopIQ
+
+This section is written in a way that can be explained directly to an instructor.
+
+In database theory, SQL statements are commonly grouped into categories. The two most important categories for explaining ShopIQ are:
+
+- `DDL`: Data Definition Language
+- `DML`: Data Manipulation Language
+
+In simple words:
+
+- DDL defines the database structure.
+- DML works with the data stored inside that structure.
+
+ShopIQ uses Prisma ORM, so most daily code is written as Prisma Client calls. Prisma then generates and executes SQL against PostgreSQL. The underlying database concepts are still DDL and DML.
+
+## 19. What DDL Means In This Project
+
+DDL stands for `Data Definition Language`.
+
+DDL statements create, change, or remove the structure of the database. In ShopIQ, DDL is mainly found in:
+
+- `prisma/schema.prisma`
+- `prisma/migrations/*/migration.sql`
+
+The Prisma schema is the source design, and Prisma migrations convert that design into PostgreSQL DDL.
+
+Common DDL statements used by ShopIQ:
+
+| DDL Statement | Meaning | ShopIQ Example |
+| --- | --- | --- |
+| `CREATE TYPE` | Creates PostgreSQL enum types | `UserRole`, `InvoiceStatus`, `PaymentMethod` |
+| `CREATE TABLE` | Creates database tables | `Shop`, `Product`, `Invoice`, `Payment` |
+| `ALTER TABLE` | Changes an existing table | Added product fields like `supplierId`, `expiryDate`, `taxRate` |
+| `CREATE INDEX` | Speeds up search/filter queries | Indexes on `shopId`, `status`, `createdAt`, `invoiceDate` |
+| `DROP INDEX` | Removes an old index | Used when replacing older indexes with better ones |
+| `ADD CONSTRAINT` | Adds primary key, unique, or foreign key rules | Foreign keys like `Product.supplierId -> Supplier.id` |
+
+### DDL Examples From ShopIQ
+
+Creating an enum:
+
+```sql
+CREATE TYPE "InvoiceStatus" AS ENUM (
+  'DRAFT',
+  'PAID',
+  'PARTIAL',
+  'UNPAID',
+  'CANCELLED'
+);
+```
+
+This defines the allowed invoice statuses. Because of this, PostgreSQL will not accept a random invoice status such as `DONE` or `FINISHED`.
+
+Creating a table:
+
+```sql
+CREATE TABLE "Product" (
+  "id" TEXT NOT NULL,
+  "shopId" TEXT NOT NULL,
+  "categoryId" TEXT,
+  "sku" TEXT NOT NULL,
+  "barcode" TEXT,
+  "name" TEXT NOT NULL,
+  "costPrice" DECIMAL(12,2) NOT NULL,
+  "salePrice" DECIMAL(12,2) NOT NULL,
+  "stockQty" INTEGER NOT NULL DEFAULT 0,
+  "status" "ProductStatus" NOT NULL DEFAULT 'ACTIVE',
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
+  CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
+);
+```
+
+This defines the structure of the `Product` table.
+
+Adding columns later:
+
+```sql
+ALTER TABLE "Product"
+ADD COLUMN "description" TEXT,
+ADD COLUMN "supplierId" TEXT,
+ADD COLUMN "taxRate" DECIMAL(5,2) NOT NULL DEFAULT 0,
+ADD COLUMN "expiryDate" TIMESTAMP(3);
+```
+
+This is DDL because it changes the shape of the table, not the data rows.
+
+Creating an index:
+
+```sql
+CREATE INDEX "Product_shopId_status_idx"
+ON "Product"("shopId", "status");
+```
+
+This helps the app quickly load products for one shop and filter active or archived products.
+
+Adding a foreign key:
+
+```sql
+ALTER TABLE "Product"
+ADD CONSTRAINT "Product_supplierId_fkey"
+FOREIGN KEY ("supplierId")
+REFERENCES "Supplier"("id")
+ON DELETE SET NULL
+ON UPDATE CASCADE;
+```
+
+This connects products to suppliers. If a supplier is removed, the product remains, but `supplierId` becomes `NULL`.
+
+### How To Explain DDL For ShopIQ
+
+You can say:
+
+> In ShopIQ, DDL is responsible for designing the database structure. Prisma migrations generate PostgreSQL statements like `CREATE TABLE`, `ALTER TABLE`, `CREATE INDEX`, and foreign key constraints. These statements define tables such as `Shop`, `Product`, `Customer`, `Invoice`, `Purchase`, `Payment`, and `StockMovement`. DDL is not used for daily sales or inventory operations; it is used when the database structure itself changes.
+
+## 20. What DML Means In This Project
+
+DML stands for `Data Manipulation Language`.
+
+DML statements insert, read, update, or delete data inside the tables that DDL created.
+
+In ShopIQ, DML happens in:
+
+- API route handlers inside `src/app/api`
+- dashboard and module data loading code
+- seed scripts inside `prisma/seed*.ts`
+- AI assistant tools inside `src/lib/ai`
+- Prisma Client calls such as `create`, `findMany`, `update`, `delete`, `aggregate`, and `upsert`
+
+Common DML statements used by ShopIQ:
+
+| DML Statement | Meaning | ShopIQ Example |
+| --- | --- | --- |
+| `INSERT` | Adds new data | Add product, customer, invoice, payment |
+| `SELECT` | Reads data | Dashboard loads sales, products, customers, reports |
+| `UPDATE` | Changes existing data | Update product price, customer balance, invoice status |
+| `DELETE` | Removes data | Delete supplier/customer only if safe |
+| `UPSERT` | Insert if missing, update if existing | Seed scripts create/find demo stores safely |
+
+Strictly speaking, `UPSERT` is PostgreSQL behavior built around `INSERT ... ON CONFLICT`, and Prisma exposes it as `upsert`.
+
+### DML Examples From ShopIQ
+
+Creating a product:
+
+```ts
+await prisma.product.create({
+  data: {
+    shopId: user.shopId,
+    sku: "ALM-KHI-0001",
+    name: "Sugar 1kg",
+    costPrice: 145,
+    salePrice: 160,
+    stockQty: 25
+  }
+});
+```
+
+Conceptually, this becomes an `INSERT`:
+
+```sql
+INSERT INTO "Product"
+("shopId", "sku", "name", "costPrice", "salePrice", "stockQty")
+VALUES
+($1, 'ALM-KHI-0001', 'Sugar 1kg', 145, 160, 25);
+```
+
+Reading products for one shop:
+
+```ts
+await prisma.product.findMany({
+  where: {
+    shopId: user.shopId,
+    status: "ACTIVE"
+  },
+  orderBy: {
+    updatedAt: "desc"
+  }
+});
+```
+
+Conceptually, this becomes a `SELECT`:
+
+```sql
+SELECT *
+FROM "Product"
+WHERE "shopId" = $1
+  AND "status" = 'ACTIVE'
+ORDER BY "updatedAt" DESC;
+```
+
+Updating a customer:
+
+```ts
+await prisma.customer.updateMany({
+  where: {
+    id: params.id,
+    shopId: user.shopId
+  },
+  data: {
+    phone: "03402211076",
+    creditLimit: 5000
+  }
+});
+```
+
+Conceptually, this becomes an `UPDATE`:
+
+```sql
+UPDATE "Customer"
+SET "phone" = '03402211076',
+    "creditLimit" = 5000
+WHERE "id" = $1
+  AND "shopId" = $2;
+```
+
+Deleting a supplier:
+
+```ts
+await prisma.supplier.delete({
+  where: {
+    id: params.id
+  }
+});
+```
+
+Conceptually, this becomes a `DELETE`:
+
+```sql
+DELETE FROM "Supplier"
+WHERE "id" = $1;
+```
+
+In the actual application, deletion is protected. The API checks whether the supplier has purchases or payments before deleting. If supplier history exists, the app should preserve history instead of deleting blindly.
+
+## 21. DML In A Real ShopIQ Sale
+
+A sale is the best example of DML in ShopIQ because it touches multiple tables.
+
+When a cashier creates an invoice, the app usually performs these DML operations:
+
+1. `SELECT` the products to confirm they exist and belong to the current shop.
+2. `SELECT` stock quantities to make sure stock will not go negative.
+3. `INSERT` one row into `Invoice`.
+4. `INSERT` one or more rows into `InvoiceItem`.
+5. `INSERT` a `Payment` row if the customer paid cash/card/wallet.
+6. `INSERT` `StockMovement` rows of type `SALE`.
+7. `UPDATE` `Product.stockQty` after stock is sold.
+8. `UPDATE` `Customer.balance` if the invoice is unpaid or partially paid.
+9. `INSERT` an `ActivityLog` entry for audit history.
+
+So, a single business action is not just one SQL statement. It is a small workflow of DML statements.
+
+Example sale data flow:
+
+```mermaid
+flowchart LR
+  A["Cashier creates invoice"] --> B["SELECT Product stock"]
+  B --> C["INSERT Invoice"]
+  C --> D["INSERT InvoiceItem rows"]
+  D --> E["INSERT Payment if paid"]
+  D --> F["INSERT StockMovement SALE"]
+  F --> G["UPDATE Product stockQty"]
+  E --> H["UPDATE Customer balance if needed"]
+  G --> I["INSERT ActivityLog"]
+  H --> I
+```
+
+## 22. DML In A Purchase From Supplier
+
+When the shop buys stock from a supplier, the app performs DML like this:
+
+1. `SELECT` the supplier and products.
+2. `INSERT` a `Purchase`.
+3. `INSERT` `PurchaseItem` rows.
+4. `UPDATE` product stock quantities if stock was received.
+5. `INSERT` `StockMovement` rows of type `PURCHASE`.
+6. `INSERT` a supplier `Payment` if paid.
+7. `UPDATE` `Supplier.balance` if any amount is due.
+8. `INSERT` an `ActivityLog` record.
+
+This is why the database has both `PurchaseItem` and `StockMovement` tables. `PurchaseItem` stores what was bought, while `StockMovement` stores how inventory changed.
+
+## 23. DDL vs DML In ShopIQ CRUD
+
+CRUD means:
+
+- Create
+- Read
+- Update
+- Delete
+
+CRUD is mostly DML.
+
+| CRUD Operation | SQL Category | SQL Statement | ShopIQ Example |
+| --- | --- | --- | --- |
+| Create | DML | `INSERT` | Add product, customer, supplier, invoice |
+| Read | DML | `SELECT` | Load dashboard, reports, product table |
+| Update | DML | `UPDATE` | Edit product price, update staff status |
+| Delete | DML | `DELETE` | Delete customer/supplier if no protected history |
+
+DDL is different because it is not normal CRUD data. DDL changes the database design itself.
+
+Examples:
+
+| Action | SQL Category |
+| --- | --- |
+| Add a new product row | DML |
+| Add a new `imageUrl` column to products | DDL |
+| Update invoice paid amount | DML |
+| Add an index on invoice date | DDL |
+| Delete a customer row | DML |
+| Create the `Customer` table | DDL |
+
+## 24. DDL And DML In Prisma Terms
+
+Because ShopIQ uses Prisma, the project vocabulary is slightly different from raw SQL.
+
+| Prisma Concept | Database Category | Meaning |
+| --- | --- | --- |
+| `schema.prisma` model | DDL design | Defines tables, columns, relations, indexes |
+| `prisma migrate dev` | DDL execution | Creates migration SQL and applies structural changes |
+| `migration.sql` | DDL file | Actual PostgreSQL DDL statements |
+| `prisma generate` | Client generation | Generates TypeScript client from schema |
+| `prisma.product.create()` | DML | Inserts product data |
+| `prisma.invoice.findMany()` | DML | Reads invoice data |
+| `prisma.customer.updateMany()` | DML | Updates customer data |
+| `prisma.supplier.delete()` | DML | Deletes supplier data |
+| `prisma.payment.aggregate()` | DML | Reads calculated totals |
+| `prisma.$executeRaw` | Raw SQL | Used for custom SQL updates such as recalculating balances |
+
+## 25. DDL And DML In The Seed Scripts
+
+The seed scripts are DML-heavy.
+
+Examples:
+
+- `prisma/seed.ts`
+- `prisma/seed-imtiaz.ts`
+- `prisma/seed-kiryana.ts`
+- `prisma/seed-alam-general-store.ts`
+
+These files do not create new tables. Instead, they insert realistic data into existing tables:
+
+- Shops
+- Users
+- Categories
+- Products
+- Customers
+- Suppliers
+- Invoices
+- Purchases
+- Payments
+- Stock movements
+- Activity logs
+- Assistant messages
+
+That means seed scripts are mostly DML, not DDL.
+
+The append-only operational seeds use idempotency markers such as:
+
+```text
+SEED_ALAM_GENERAL_STORE_V1_COMPLETED
+SEED_KIRYANA_V1_COMPLETED
+SEED_IMTIAZ_V1_COMPLETED
+```
+
+Those markers are stored in `ActivityLog`. Before inserting generated data, the seed checks whether the marker already exists. If it exists, the seed exits without creating duplicates.
+
+This is still DML because it is reading and writing rows, not changing table structure.
+
+## 26. DDL And DML In The AI Assistant
+
+The AI assistant also uses DML, but with guardrails.
+
+Read-only questions use `SELECT`-style operations through Prisma:
+
+- "How much did we earn today?"
+- "Which products are low stock?"
+- "How much money is pending from this customer?"
+- "Show supplier payables."
+
+Write actions use DML too, but the assistant is designed to ask for confirmation before committing changes:
+
+- Create product -> `INSERT Product`
+- Update customer -> `UPDATE Customer`
+- Create supplier -> `INSERT Supplier`
+- Create payment -> `INSERT Payment`
+- Create invoice -> `INSERT Invoice`, `INSERT InvoiceItem`, `UPDATE Product`, `INSERT StockMovement`
+
+So the assistant does not define the database. It manipulates existing data inside the database after approval.
+
+## 27. Final Instructor Explanation
+
+Use this short explanation when presenting:
+
+> ShopIQ uses PostgreSQL with Prisma ORM. The database structure is defined through DDL statements generated by Prisma migrations. These DDL statements create enums, tables, primary keys, foreign keys, unique constraints, indexes, and later schema changes through `ALTER TABLE`. Examples are tables like `Product`, `Invoice`, `Payment`, and `StockMovement`.
+>
+> The actual application operations are DML. When a user adds a product, creates an invoice, records a payment, receives stock from a supplier, or asks the AI assistant for sales totals, the app performs DML operations such as `INSERT`, `SELECT`, `UPDATE`, and sometimes `DELETE`. Prisma Client methods like `create`, `findMany`, `updateMany`, `delete`, `aggregate`, and `upsert` map to those DML operations.
+>
+> In this project, DDL builds the database design, while DML runs the retail business workflows.
+
+One very simple sentence:
+
+> DDL is the blueprint of ShopIQ's database, and DML is the daily retail activity happening inside that blueprint.

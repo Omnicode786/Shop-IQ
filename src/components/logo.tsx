@@ -1,16 +1,19 @@
 import Link from "next/link";
-import { PackageCheck } from "lucide-react";
+import Image from "next/image";
 
 export function Logo() {
   return (
-    <Link href="/" className="flex min-w-0 items-center gap-3">
-      <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/20">
-        <PackageCheck className="size-5" />
-      </div>
-      <div className="min-w-0">
-        <p className="truncate text-lg font-semibold tracking-normal">ShopIQ</p>
-        <p className="truncate text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Retail inventory</p>
-      </div>
+    <Link href="/" className="inline-flex min-w-0 items-center" aria-label="ShopIQ home">
+      <span className="shopiq-logo-glass flex h-12 w-[170px] shrink-0 items-center justify-center rounded-2xl px-3 py-2 sm:h-14 sm:w-[210px]">
+        <Image
+          src="/logo.png"
+          alt="ShopIQ"
+          width={1086}
+          height={304}
+          priority
+          className="h-full w-full object-contain"
+        />
+      </span>
     </Link>
   );
 }

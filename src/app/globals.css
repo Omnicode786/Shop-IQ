@@ -1399,18 +1399,49 @@ body {
 
 .chart-card-title {
   display: flex;
-  align-items: center;
+  min-width: 0;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
 }
 
+.chart-card-title > div {
+  min-width: 0;
+  flex: 1;
+}
+
 .chart-chip {
+  display: inline-flex;
+  max-width: min(11rem, 44%);
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
   border-radius: 999px;
   border: 1px solid rgba(15,15,23,0.08);
   background: rgba(255,255,255,0.62);
   padding: 0.45rem 0.75rem;
   font-size: 0.72rem;
   color: hsl(var(--muted-foreground));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-legend-pill {
+  display: inline-flex;
+  max-width: min(100%, 13rem);
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border) / 0.7);
+  background: hsl(var(--background) / 0.55);
+  padding: 0.25rem 0.65rem;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dark .chart-chip {
@@ -1651,6 +1682,31 @@ html[data-ui-mode="glass"] .surface-card {
   color: hsl(var(--shopiq-hero-text) / 0.92);
 }
 
+.shopiq-logo-glass {
+  border: 1px solid hsl(0 0% 100% / 0.48);
+  background:
+    linear-gradient(135deg, hsl(0 0% 100% / 0.58), hsl(var(--shopiq-accent-3) / 0.16)),
+    linear-gradient(180deg, hsl(0 0% 100% / 0.20), hsl(0 0% 100% / 0.04));
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.68) inset,
+    0 18px 38px hsl(var(--shopiq-ink) / 0.10),
+    0 0 34px hsl(var(--shopiq-accent) / 0.10);
+  backdrop-filter: blur(18px) saturate(1.22);
+  -webkit-backdrop-filter: blur(18px) saturate(1.22);
+}
+
+.dark .shopiq-logo-glass,
+html[data-ui-mode="glass"] .shopiq-logo-glass {
+  border-color: hsl(0 0% 100% / 0.16);
+  background:
+    linear-gradient(135deg, hsl(0 0% 100% / 0.18), hsl(var(--shopiq-accent-3) / 0.14)),
+    linear-gradient(180deg, hsl(0 0% 100% / 0.09), hsl(0 0% 100% / 0.025));
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.16) inset,
+    0 18px 38px hsl(0 0% 0% / 0.22),
+    0 0 34px hsl(var(--shopiq-accent) / 0.14);
+}
+
 .sidebar-shell {
   display: grid;
   grid-template-columns: 4.25rem minmax(0, 1fr);
@@ -1698,9 +1754,18 @@ html[data-ui-mode="glass"] .surface-card {
 }
 
 .sidebar-mark {
-  background: hsl(var(--shopiq-accent));
-  color: hsl(var(--primary-foreground));
-  box-shadow: 0 18px 34px hsl(var(--shopiq-accent) / 0.28);
+  overflow: hidden;
+  border: 1px solid hsl(0 0% 100% / 0.16);
+  background:
+    linear-gradient(135deg, hsl(0 0% 100% / 0.22), hsl(var(--shopiq-accent-3) / 0.12)),
+    linear-gradient(180deg, hsl(0 0% 100% / 0.10), hsl(0 0% 100% / 0.025));
+  padding: 0.38rem;
+  color: hsl(var(--shopiq-ink));
+  backdrop-filter: blur(14px) saturate(1.22);
+  -webkit-backdrop-filter: blur(14px) saturate(1.22);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.22) inset,
+    0 18px 34px hsl(var(--shopiq-accent) / 0.24);
 }
 
 .sidebar-rail-links {
@@ -1759,6 +1824,27 @@ html[data-ui-mode="glass"] .surface-card {
   justify-content: space-between;
   gap: 1rem;
   padding-inline: 0.2rem;
+}
+
+.sidebar-brand-logo {
+  display: flex;
+  height: 3.5rem;
+  width: min(11.75rem, 100%);
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 1.15rem;
+  border: 1px solid hsl(0 0% 100% / 0.16);
+  background:
+    linear-gradient(135deg, hsl(0 0% 100% / 0.20), hsl(var(--shopiq-accent-3) / 0.11)),
+    linear-gradient(180deg, hsl(0 0% 100% / 0.09), hsl(0 0% 100% / 0.025));
+  padding: 0.55rem 0.8rem;
+  backdrop-filter: blur(16px) saturate(1.18);
+  -webkit-backdrop-filter: blur(16px) saturate(1.18);
+  box-shadow:
+    0 1px 0 hsl(0 0% 100% / 0.18) inset,
+    0 18px 38px hsl(0 0% 0% / 0.16);
 }
 
 .sidebar-brand-title {
@@ -1978,6 +2064,8 @@ html[data-ui-mode="glass"] .chart-chip {
 }
 
 .hero-badge {
+  max-width: min(100%, 18rem);
+  min-width: 0;
   border-color: hsl(0 0% 100% / 0.18);
   background: hsl(0 0% 100% / 0.08);
   color: hsl(0 0% 100% / 0.88);
@@ -2042,6 +2130,7 @@ html[data-ui-mode="glass"] .chart-chip {
 .hero-stat,
 .module-stat {
   display: flex;
+  min-width: 0;
   gap: 0.75rem;
   align-items: center;
   border: 1px solid hsl(0 0% 100% / 0.11);
@@ -2052,16 +2141,24 @@ html[data-ui-mode="glass"] .chart-chip {
 
 .hero-stat p,
 .module-stat p {
+  max-width: 100%;
+  overflow: hidden;
   font-size: 0.76rem;
   color: hsl(0 0% 100% / 0.58);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hero-stat strong,
 .module-stat strong {
   display: block;
+  max-width: 100%;
+  overflow: hidden;
   margin-top: 0.1rem;
   color: hsl(0 0% 100% / 0.94);
   font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dashboard-hero .hero-stat {
@@ -2118,6 +2215,7 @@ html[data-ui-mode="glass"] .chart-chip {
 .risk-line,
 .module-line {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
@@ -2128,17 +2226,28 @@ html[data-ui-mode="glass"] .chart-chip {
 
 .risk-line span,
 .module-line span {
+  min-width: 0;
+  overflow: hidden;
   color: hsl(var(--muted-foreground));
   font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .risk-line strong,
 .module-line strong {
+  max-width: 48%;
+  min-width: 0;
+  overflow: hidden;
   font-size: 0.95rem;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inventory-chip {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
@@ -2150,8 +2259,18 @@ html[data-ui-mode="glass"] .chart-chip {
 }
 
 .inventory-chip strong {
+  max-width: 48%;
+  overflow: hidden;
   color: hsl(var(--primary));
   font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inventory-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2472,8 +2591,8 @@ html[data-ui-mode="glass"] .chart-chip {
 .message-enter-user {
   transform-origin: calc(100% - 24px) 100%;
   animation-name: shopiq-message-send;
-  animation-duration: 980ms;
-  animation-timing-function: cubic-bezier(0.22, 0.78, 0.18, 1);
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .message-focus-user {
@@ -2977,9 +3096,12 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 
 .analytics-pill {
   display: inline-flex;
-  flex: none;
+  flex: 0 1 auto;
+  max-width: min(10rem, 42%);
+  min-width: 0;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   min-height: 2rem;
   border-radius: 999px;
   border: 1px solid hsl(var(--border) / 0.72);
@@ -2988,14 +3110,20 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
   color: hsl(var(--muted-foreground));
   font-size: 0.75rem;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .analytics-value {
+  max-width: 100%;
+  overflow: hidden;
   color: hsl(var(--foreground));
   font-size: clamp(1.75rem, 4vw, 2.65rem);
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .analytics-icon-disc {
@@ -3013,9 +3141,13 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 
 .analytics-legend-dot {
   display: inline-flex;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 0.45rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .analytics-legend-dot::before {
@@ -3080,7 +3212,11 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 
 .analytics-mini-rail > span {
   width: 4.7rem;
+  min-width: 0;
+  overflow: hidden;
   color: hsl(var(--muted-foreground));
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .analytics-mini-rail > div {
@@ -3178,21 +3314,27 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 }
 
 .analytics-donut-center > span {
+  max-width: 8.5rem;
+  overflow: hidden;
   color: hsl(var(--muted-foreground));
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   letter-spacing: 0.13em;
 }
 
 .analytics-donut-center > strong {
   display: block;
   max-width: 10.5rem;
+  overflow: hidden;
   margin-top: 0.2rem;
   color: hsl(var(--foreground));
   font-size: clamp(1rem, 2.1vw, 1.42rem);
   line-height: 1.08;
-  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .analytics-donut-center > small {
@@ -3208,13 +3350,17 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
   right: 1rem;
   top: 1rem;
   z-index: 3;
+  min-width: 0;
   max-width: calc(100% - 2rem);
+  overflow: hidden;
   border-radius: 999px;
   background: hsl(var(--foreground) / 0.88);
   color: hsl(var(--background));
   padding: 0.45rem 0.75rem;
   font-size: 0.72rem;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   box-shadow: 0 14px 30px hsl(var(--shopiq-ink) / 0.16);
 }
 
@@ -3224,6 +3370,7 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
   left: 0.85rem;
   z-index: 3;
   max-width: calc(100% - 1.7rem);
+  overflow: hidden;
   border-radius: 1rem;
   border: 1px solid hsl(var(--border) / 0.48);
   background: hsl(var(--card) / 0.92);
@@ -3235,6 +3382,10 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 .analytics-donut-hover-card strong,
 .analytics-donut-hover-card em {
   display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .analytics-donut-hover-card strong {
@@ -3276,15 +3427,22 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 }
 
 .analytics-donut-row > div {
+  min-width: 0;
   flex: 1;
 }
 
 .analytics-donut-row strong {
+  max-width: 100%;
+  overflow: hidden;
   font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .analytics-donut-percent {
   display: grid;
+  min-width: 4.75rem;
+  max-width: 6.25rem;
   justify-items: end;
   gap: 0.14rem;
   padding-left: 0.7rem;
@@ -3293,10 +3451,12 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 
 .analytics-donut-percent span {
   max-width: 6rem;
+  overflow: hidden;
   color: hsl(var(--muted-foreground));
   font-size: 0.7rem;
   line-height: 1.15;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .analytics-donut-track {
@@ -3319,6 +3479,15 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
   font-size: 0.82rem;
 }
 
+.ranked-row span,
+.ranked-row strong,
+.analytics-segment-line strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ranked-track {
   height: 0.72rem;
   overflow: hidden;
@@ -3334,6 +3503,7 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 
 .analytics-bubble {
   display: flex;
+  min-width: 0;
   overflow: hidden;
   min-height: 8.2rem;
   flex-direction: column;
@@ -3363,8 +3533,12 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 }
 
 .analytics-bubble strong {
+  max-width: 100%;
+  overflow: hidden;
   font-size: clamp(1.5rem, 2.7vw, 2.75rem);
   line-height: 1.02;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   word-break: keep-all;
   overflow-wrap: normal;
 }
@@ -3376,10 +3550,43 @@ html[data-shadcn-theme="tweakcn-brutalist"] .hero-orbit {
 }
 
 .analytics-bubble span {
+  max-width: 100%;
+  overflow: hidden;
   margin-top: 0.45rem;
   color: hsl(0 0% 100% / 0.72);
   font-size: 0.75rem;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-empty-state {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  border-radius: 1.25rem;
+  border: 1px dashed hsl(var(--border) / 0.7);
+  background:
+    radial-gradient(circle at 50% 0%, hsl(var(--shopiq-accent) / 0.08), transparent 38%),
+    hsl(var(--background) / 0.44);
+  padding: 1rem;
+  text-align: center;
+}
+
+.analytics-empty-state span {
+  max-width: 16rem;
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bubble-board > .analytics-empty-state,
+.analytics-donut-list > .analytics-empty-state {
+  grid-column: 1 / -1;
+  min-height: 7rem;
 }
 
 @container (max-width: 25rem) {

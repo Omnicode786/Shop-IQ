@@ -10,6 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "seed": "tsx prisma/seed.ts",
+    "seed:alam": "tsx prisma/seed-alam-general-store.ts",
     "seed:imtiaz": "tsx prisma/seed-imtiaz.ts",
     "seed:kiryana": "tsx prisma/seed-kiryana.ts"
   },
