@@ -1,12 +1,9 @@
 import { BarChart3, Package, WalletCards } from "lucide-react";
 import { AppShell } from "@/components/workspace/app-shell";
 import {
-  BubbleInsightCard,
   ComparativeBarsCard,
   DonutBreakdownCard,
   RankedBarsCard,
-  RingScoreCard,
-  StackedSignalCard,
   TrendAreaCard
 } from "@/components/workspace/analytics-cards";
 import { MetricCard } from "@/components/workspace/metric-card";
@@ -65,15 +62,7 @@ export default async function Reports() {
         <MetricCard icon={Package} title="Inventory" value={money(snapshot.metrics.inventoryValue)} tone="violet" />
         <MetricCard icon={WalletCards} title="Net dues" value={money(netDues)} tone="amber" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr_0.9fr]">
-        <RingScoreCard
-          title="Business control score"
-          description="Stock health expressed as one fast confidence reading."
-          score={Math.max(0, 100 - snapshot.metrics.stockRiskScore)}
-          value={`${Math.max(0, 100 - snapshot.metrics.stockRiskScore)}%`}
-          label="Control"
-          badge="Score"
-        />
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
         <TrendAreaCard
           title="Revenue trend"
           description="Daily gross sales for the current operating window."
@@ -81,24 +70,6 @@ export default async function Reports() {
           caption={snapshot.metrics.revenueWindowLabel}
           data={snapshot.charts.revenueTimeline}
           badge="Revenue"
-          format="money"
-        />
-        <StackedSignalCard
-          title="Invoice status"
-          description="Settlement state across recent invoices."
-          data={snapshot.charts.invoiceStatus}
-          totalLabel={`${snapshot.invoices.length} recent invoices`}
-          badge="Billing"
-        />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <ComparativeBarsCard
-          title="Cashflow comparison"
-          description="Receipts and supplier payouts in the same reporting lane."
-          data={snapshot.charts.cashflowTimeline}
-          valueLabel="Receipts"
-          secondaryLabel="Payouts"
-          badge="Cash"
           format="money"
         />
         <DonutBreakdownCard
@@ -111,6 +82,15 @@ export default async function Reports() {
         />
       </div>
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <ComparativeBarsCard
+          title="Cashflow comparison"
+          description="Receipts and supplier payouts in the same reporting lane."
+          data={snapshot.charts.cashflowTimeline}
+          valueLabel="Receipts"
+          secondaryLabel="Payouts"
+          badge="Cash"
+          format="money"
+        />
         <RankedBarsCard
           title="Fast moving products"
           description="Products with the strongest live sale movement."
@@ -123,26 +103,6 @@ export default async function Reports() {
           rows={snapshot.charts.customerDueRank}
           format="money"
           badge="Dues"
-        />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
-        <BubbleInsightCard
-          title="Executive summary bubbles"
-          description="Large readings for the decisions that usually matter first."
-          bubbles={[
-            { label: "Revenue", value: compactMoney(snapshot.metrics.monthlyRevenue), size: "lg" },
-            { label: "Inventory", value: compactMoney(snapshot.metrics.inventoryValue), size: "md" },
-            { label: "Net dues", value: compactMoney(netDues), size: "sm" },
-            { label: "Low stock", value: snapshot.metrics.lowStockCount, size: "sm" }
-          ]}
-          badge="Board"
-        />
-        <RankedBarsCard
-          title="Margin leaders"
-          description="Stock with the highest potential gross margin still on hand."
-          rows={snapshot.charts.marginLeaders}
-          format="money"
-          badge="Margin"
         />
       </div>
     </AppShell>

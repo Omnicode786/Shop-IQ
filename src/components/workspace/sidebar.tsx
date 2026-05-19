@@ -75,7 +75,7 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
   }
 
   return (
-    <aside className={cn("app-sidebar shopiq-sidebar sticky top-0 hidden h-screen shrink-0 p-4 transition-[width] duration-300 lg:flex", collapsed ? "w-[112px]" : "w-[360px]")}>
+    <aside className={cn("app-sidebar shopiq-sidebar top-0 hidden h-dvh shrink-0 self-start p-4 transition-[width] duration-300 lg:sticky lg:flex", collapsed ? "w-[112px]" : "w-[360px]")}>
       <div className={cn("sidebar-shell nav-surface", collapsed && "is-collapsed")}>
         <div className="sidebar-rail" aria-label="Primary workspace shortcuts">
           <Link href="/" className="sidebar-mark" aria-label="ShopIQ home">
@@ -117,14 +117,14 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
             <div className="sidebar-pulse-card">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.16em] text-white/42">Now viewing</p>
+                  <p className="sidebar-caption">Now viewing</p>
                   <div className="mt-3 flex items-center gap-3">
-                    <div className="flex size-11 items-center justify-center rounded-2xl bg-white/10 text-white">
+                    <div className="sidebar-current-module-icon flex size-11 items-center justify-center rounded-2xl">
                       <CurrentIcon className="size-5" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-base font-semibold leading-5 tracking-normal text-white">{current.label}</p>
-                      <p className="truncate text-xs text-white/44">{heading}</p>
+                      <p className="sidebar-strong-text text-base font-semibold leading-5 tracking-normal">{current.label}</p>
+                      <p className="sidebar-muted-line truncate text-xs">{heading}</p>
                     </div>
                   </div>
                 </div>
@@ -155,9 +155,9 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
             </nav>
 
             <div className="sidebar-footer-card">
-              <p className="text-xs font-medium text-white/76">{loggingOut ? "Closing workspace..." : "Role based control"}</p>
-              <p className="mt-1 text-xs leading-5 text-white/42">Every module respects your access level and keeps records protected.</p>
-              <button type="button" onClick={logout} disabled={loggingOut} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-white/[0.08] px-3 py-2.5 text-sm text-white/72 transition hover:bg-white/[0.12] hover:text-white disabled:opacity-70">
+              <p className="sidebar-footer-title text-xs font-medium">{loggingOut ? "Closing workspace..." : "Role based control"}</p>
+              <p className="sidebar-muted-line mt-1 text-xs leading-5">Every module respects your access level and keeps records protected.</p>
+              <button type="button" onClick={logout} disabled={loggingOut} className="sidebar-footer-button mt-3 flex w-full items-center justify-center gap-2 rounded-2xl px-3 py-2.5 text-sm transition disabled:opacity-70">
                 <LogOut className="size-4" />
                 {loggingOut ? "Logging out..." : "Logout"}
               </button>
