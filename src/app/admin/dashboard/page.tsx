@@ -4,7 +4,9 @@ import { AppShell } from "@/components/workspace/app-shell";
 import { ActivityFeed } from "@/components/workspace/activity-feed";
 import {
   BubbleInsightCard,
+  ComparativeBarsCard,
   DonutBreakdownCard,
+  RankedBarsCard,
   TrendAreaCard
 } from "@/components/workspace/analytics-cards";
 import { DataTable } from "@/components/workspace/data-table";
@@ -204,7 +206,16 @@ export default async function AdminDashboard() {
         />
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
+        <ComparativeBarsCard
+          title="Cashflow pressure"
+          description="Customer receipts against supplier payouts, shown day by day."
+          data={snapshot.charts.cashflowTimeline}
+          valueLabel="Receipts"
+          secondaryLabel="Payouts"
+          badge="Cash"
+          format="money"
+        />
         <DonutBreakdownCard
           title="Inventory value orbit"
           description="Category concentration with the large center value kept scannable."
@@ -216,7 +227,7 @@ export default async function AdminDashboard() {
         />
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <BubbleInsightCard
           title="Operating bubbles"
           description="A quick board for the four numbers that usually drive the next move."
@@ -227,6 +238,12 @@ export default async function AdminDashboard() {
             { label: "Low stock", value: snapshot.metrics.lowStockCount, size: "sm" }
           ]}
           badge="Live"
+        />
+        <RankedBarsCard
+          title="Receivable leaders"
+          description="Customers with the highest outstanding balances."
+          rows={snapshot.charts.customerDueRank}
+          format="money"
         />
       </div>
 

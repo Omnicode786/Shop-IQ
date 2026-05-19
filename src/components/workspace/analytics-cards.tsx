@@ -1,14 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
-import {
-  ArcElement,
-  Chart as ChartJS,
-  Legend,
-  Tooltip as ChartJSTooltip,
-  type ChartOptions
-} from "chart.js";
-import { Doughnut } from "react-chartjs-2";
+import { useId, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -27,17 +19,6 @@ import { cn } from "@/lib/utils";
 
 type ValueFormat = "compact" | "money" | "number";
 
-ChartJS.register(ArcElement, ChartJSTooltip, Legend);
-
-const chartVarNames = [
-  "--shopiq-chart-1",
-  "--shopiq-chart-2",
-  "--shopiq-chart-3",
-  "--shopiq-chart-4",
-  "--shopiq-chart-5",
-  "--shopiq-chart-6"
-];
-
 const palette = [
   "hsl(var(--shopiq-chart-1))",
   "hsl(var(--shopiq-chart-2))",
@@ -46,6 +27,11 @@ const palette = [
   "hsl(var(--shopiq-chart-5))",
   "hsl(var(--shopiq-chart-6))"
 ];
+
+const DONUT_SIZE = 240;
+const DONUT_CENTER = DONUT_SIZE / 2;
+const DONUT_RADIUS = 82;
+const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
 
 function tooltipStyle() {
   return {
@@ -103,43 +89,22 @@ function EmptyChartState({ label = "No role-visible chart data yet" }: { label?:
   );
 }
 
-function resolveHslVar(name: string, fallback: string) {
-  if (typeof window === "undefined") return fallback;
-  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return raw ? `hsl(${raw})` : fallback;
-}
+function buildDonutSegments(data: SegmentDatum[], total: number) {
+  const positive = normalizeSegments(data).map((item, index) => ({ ...item, sourceIndex: index }));
+  const gap = positive.length > 1 ? 5 : 0;
+  let offset = 0;
 
-function useThemeChartColors() {
-  const [colors, setColors] = useState({
-    palette,
-    card: "hsl(var(--card))",
-    foreground: "hsl(var(--foreground))",
-    muted: "hsl(var(--muted-foreground))",
-    border: "hsl(var(--border))"
-  });
-
-  useEffect(() => {
-    const root = document.documentElement;
-    const update = () => {
-      setColors({
-        palette: chartVarNames.map((name, index) => resolveHslVar(name, palette[index])),
-        card: resolveHslVar("--card", "hsl(var(--card))"),
-        foreground: resolveHslVar("--foreground", "hsl(var(--foreground))"),
-        muted: resolveHslVar("--muted-foreground", "hsl(var(--muted-foreground))"),
-        border: resolveHslVar("--border", "hsl(var(--border))")
-      });
+  return positive.map((item) => {
+    const rawLength = (item.value / Math.max(total, 1)) * DONUT_CIRCUMFERENCE;
+    const segment = {
+      ...item,
+      length: Math.max(rawLength - gap, 0),
+      offset,
+      percentValue: (item.value / Math.max(total, 1)) * 100
     };
-
-    update();
-    const observer = new MutationObserver(update);
-    observer.observe(root, {
-      attributes: true,
-      attributeFilter: ["class", "data-ui-mode", "data-shadcn-theme", "style"]
-    });
-    return () => observer.disconnect();
-  }, []);
-
-  return colors;
+    offset += rawLength;
+    return segment;
+  });
 }
 
 function ChartHeader({
@@ -299,104 +264,71 @@ export function DonutBreakdownCard({
   const [activeName, setActiveName] = useState<string | null>(null);
   const chartData = normalizeSegments(data);
   const total = chartData.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const segments = buildDonutSegments(chartData, total);
   const topSegment = [...chartData].sort((a, b) => Number(b.value || 0) - Number(a.value || 0))[0];
   const topPercent = topSegment ? (Number(topSegment.value || 0) / Math.max(total, 1)) * 100 : 0;
-  const activeSegment = chartData.find((segment) => segment.name === activeName) || null;
-  const activeIndex = activeSegment ? chartData.findIndex((segment) => segment.name === activeSegment.name) : -1;
-  const activePercent = activeSegment ? (Number(activeSegment.value || 0) / Math.max(total, 1)) * 100 : 0;
+  const activeSegment = segments.find((segment) => segment.name === activeName) || null;
   const cleanCenterLabel = cleanText(centerLabel) || "Total";
   const cleanCenterValue = cleanText(centerValue) || formatValue(total, format);
   const featuredName = activeSegment?.name || topSegment?.name || "";
   const featuredValue = activeSegment?.value ?? Number(topSegment?.value || 0);
-  const featuredPercent = activeSegment ? activePercent : topPercent;
-  const chartColors = useThemeChartColors();
-  const chartJsData = useMemo(() => ({
-    labels: chartData.map((item) => item.name),
-    datasets: [
-      {
-        data: chartData.map((item) => item.value),
-        backgroundColor: chartData.map((_, index) => chartColors.palette[index % chartColors.palette.length]),
-        hoverBackgroundColor: chartData.map((_, index) => chartColors.palette[index % chartColors.palette.length]),
-        borderColor: chartColors.card,
-        borderWidth: 4,
-        hoverBorderWidth: 5,
-        hoverOffset: 8,
-        offset: chartData.map((item) => item.name === activeName ? 10 : 0),
-        spacing: chartData.length > 1 ? 4 : 0
-      }
-    ]
-  }), [activeName, chartColors.card, chartColors.palette, chartData]);
-  const chartOptions = useMemo<ChartOptions<"doughnut">>(() => ({
-    responsive: true,
-    maintainAspectRatio: false,
-    cutout: "58%",
-    animation: {
-      duration: 560,
-      easing: "easeOutQuart"
-    },
-    layout: {
-      padding: 10
-    },
-    onHover: (_event, elements) => {
-      const next = elements[0]?.index;
-      setActiveName(next === undefined ? null : chartData[next]?.name ?? null);
-    },
-    plugins: {
-      legend: {
-        display: false
-      },
-      tooltip: {
-        enabled: true,
-        backgroundColor: chartColors.card,
-        borderColor: chartColors.border,
-        borderWidth: 1,
-        bodyColor: chartColors.foreground,
-        titleColor: chartColors.foreground,
-        footerColor: chartColors.muted,
-        displayColors: true,
-        padding: 12,
-        cornerRadius: 14,
-        callbacks: {
-          label: (context) => {
-            const value = Number(context.parsed || 0);
-            const percent = (value / Math.max(total, 1)) * 100;
-            return `${context.label}: ${formatValue(value, format)} (${formatPercentLabel(percent, value)})`;
-          }
-        }
-      }
-    }
-  }), [chartColors.border, chartColors.card, chartColors.foreground, chartColors.muted, chartData, format, total]);
+  const featuredPercent = activeSegment?.percentValue ?? topPercent;
 
   return (
     <Card className="analytics-card analytics-donut-card overflow-hidden">
       <ChartHeader title={title} description={description} badge={badge} />
       <CardContent className="p-5 pt-0">
         <div className="analytics-donut-shell">
-          <div className="analytics-donut-visual" onMouseLeave={() => setActiveName(null)}>
-            {chartData.length ? (
-              <div className="analytics-chartjs-donut" aria-label={`${title}: ${cleanCenterValue}`}>
-                <Doughnut data={chartJsData} options={chartOptions} />
-                <div className="analytics-donut-center">
-                  <span title={activeSegment ? activeSegment.name : cleanCenterLabel}>{activeSegment ? activeSegment.name : cleanCenterLabel}</span>
-                  <strong title={activeSegment ? formatPercentLabel(activePercent, activeSegment.value) : cleanCenterValue}>{activeSegment ? formatPercentLabel(activePercent, activeSegment.value) : cleanCenterValue}</strong>
-                  {activeSegment ? <small>{formatValue(activeSegment.value, format)}</small> : null}
-                </div>
-                {featuredValue && featuredName ? (
-                  <div className="analytics-donut-chip" title={`${featuredName} ${formatPercentLabel(featuredPercent, featuredValue)}`}>
-                    {featuredName} {formatPercentLabel(featuredPercent, featuredValue)}
-                  </div>
-                ) : null}
-                {activeSegment ? (
-                  <div className="analytics-donut-hover-card">
-                    <span className="analytics-legend-dot" style={{ ["--dot" as string]: chartColors.palette[Math.max(activeIndex, 0) % chartColors.palette.length] }}>{activeSegment.name}</span>
-                    <strong>{formatValue(activeSegment.value, format)}</strong>
-                    <em>{formatPercentLabel(activePercent, activeSegment.value)} of total</em>
-                  </div>
-                ) : null}
+          <div className="analytics-donut-visual">
+            <svg className="analytics-donut-svg" viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} role="img" aria-label={`${title}: ${cleanCenterValue}`} onMouseLeave={() => setActiveName(null)}>
+              <title>{`${title}: ${cleanCenterValue}`}</title>
+              <circle
+                className="analytics-donut-base"
+                cx={DONUT_CENTER}
+                cy={DONUT_CENTER}
+                r={DONUT_RADIUS}
+              />
+              {segments.map((segment) => (
+                <circle
+                  key={segment.name}
+                  className="analytics-donut-slice"
+                  cx={DONUT_CENTER}
+                  cy={DONUT_CENTER}
+                  r={DONUT_RADIUS}
+                  tabIndex={0}
+                  aria-label={`${segment.name}: ${formatValue(segment.value, format)}, ${formatPercentLabel(segment.percentValue, segment.value)}`}
+                  data-active={activeName === segment.name || undefined}
+                  strokeDasharray={`${segment.length} ${Math.max(DONUT_CIRCUMFERENCE - segment.length, 0)}`}
+                  strokeDashoffset={-segment.offset}
+                  onMouseEnter={() => setActiveName(segment.name)}
+                  onFocus={() => setActiveName(segment.name)}
+                  onBlur={() => setActiveName(null)}
+                  style={{
+                    ["--slice-color" as string]: palette[segment.sourceIndex % palette.length],
+                    animationDelay: `${segment.sourceIndex * 70}ms`
+                  }}
+                >
+                  <title>{`${segment.name}: ${formatValue(segment.value, format)} (${formatPercentLabel(segment.percentValue, segment.value)})`}</title>
+                </circle>
+              ))}
+            </svg>
+            <div className="analytics-donut-center">
+              <span title={activeSegment ? activeSegment.name : cleanCenterLabel}>{activeSegment ? activeSegment.name : cleanCenterLabel}</span>
+              <strong title={activeSegment ? formatPercentLabel(activeSegment.percentValue, activeSegment.value) : cleanCenterValue}>{activeSegment ? formatPercentLabel(activeSegment.percentValue, activeSegment.value) : cleanCenterValue}</strong>
+              {activeSegment ? <small>{formatValue(activeSegment.value, format)}</small> : null}
+            </div>
+            {featuredValue && featuredName ? (
+              <div className="analytics-donut-chip" title={`${featuredName} ${formatPercentLabel(featuredPercent, featuredValue)}`}>
+                {featuredName} {formatPercentLabel(featuredPercent, featuredValue)}
               </div>
-            ) : (
-              <EmptyChartState />
-            )}
+            ) : null}
+            {activeSegment ? (
+              <div className="analytics-donut-hover-card">
+                <span className="analytics-legend-dot" style={{ ["--dot" as string]: palette[activeSegment.sourceIndex % palette.length] }}>{activeSegment.name}</span>
+                <strong>{formatValue(activeSegment.value, format)}</strong>
+                <em>{formatPercentLabel(activeSegment.percentValue, activeSegment.value)} of total</em>
+              </div>
+            ) : null}
           </div>
           <div className="analytics-donut-list">
             {chartData.length ? chartData.slice(0, 6).map((item, index) => {
