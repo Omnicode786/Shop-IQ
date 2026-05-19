@@ -1,0 +1,8 @@
+.next
+node_modules
+coverage
+dist
+generated_reports
+public/uploads
+tsconfig.tsbuildinfo
+package-lock.json
