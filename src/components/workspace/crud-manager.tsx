@@ -331,6 +331,7 @@ export function CrudManager({
   const [modalClosing, setModalClosing] = useState(false);
   const closeTimer = useRef<number | null>(null);
   const originElementRef = useRef<Element | null>(null);
+  const closeDialogRef = useRef<() => void>(() => {});
   const [form, setForm] = useState<Record<string, any>>(defaultForm(fields));
   const [query, setQuery] = useState(pagination?.query ?? "");
   const [statusFilter, setStatusFilter] = useState(pagination?.status || "all");
@@ -554,6 +555,20 @@ export function CrudManager({
     if (loading) return;
     finishDialogClose({ clearMessage: true });
   }
+  closeDialogRef.current = closeDialog;
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat || modalClosing) return;
+      event.preventDefault();
+      closeDialogRef.current();
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [dialogOpen, modalClosing]);
 
   function updateField(key: string, value: unknown) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -792,9 +807,9 @@ export function CrudManager({
           </div>
         </div>
         {message && !dialogOpen ? <div className="status-message mx-4 mt-4 border-destructive/20 bg-destructive/10 text-destructive sm:mx-5">{message}</div> : null}
-        {dialogOpen ? (
-          <ModalPortal>
-          <div className="crud-modal-layer" data-state={modalClosing ? "closing" : "open"} role="presentation" onKeyDown={(event) => event.key === "Escape" && closeDialog()}>
+      {dialogOpen ? (
+        <ModalPortal>
+          <div className="crud-modal-layer" data-state={modalClosing ? "closing" : "open"} role="presentation">
             <button type="button" className="crud-modal-backdrop" data-state={modalClosing ? "closing" : "open"} aria-label="Close dialog" onClick={closeDialog} />
             <div
               className={cn("crud-modal motion-modal", mode === "closed" && detailRow && "crud-modal-details", deleteRow && "crud-modal-confirm")}

@@ -36,6 +36,7 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
   const [modalOrigin, setModalOrigin] = useState<ModalMotionOrigin | null>(null);
   const closeTimer = useRef<number | null>(null);
   const originElementRef = useRef<Element | null>(null);
+  const closeFromKeyboardRef = useRef<() => void>(() => {});
   const [createSupplier, setCreateSupplier] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -127,6 +128,20 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
       closeTimer.current = null;
     }, MODAL_EXIT_MS);
   }
+  closeFromKeyboardRef.current = () => close();
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat || closing) return;
+      event.preventDefault();
+      closeFromKeyboardRef.current();
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [closing, open]);
 
   function stopWithMessage(text: string) {
     setMessage(text);
@@ -212,7 +227,7 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
       </Button>
       {open ? (
         <ModalPortal>
-        <div className="crud-modal-layer" data-state={closing ? "closing" : "open"} role="presentation" onKeyDown={(event) => event.key === "Escape" && close()}>
+        <div className="crud-modal-layer" data-state={closing ? "closing" : "open"} role="presentation">
           <button type="button" className="crud-modal-backdrop" data-state={closing ? "closing" : "open"} aria-label="Close purchase flow" onClick={() => close()} />
           <div className="crud-modal motion-modal billing-flow-modal" data-state={closing ? "closing" : "open"} style={modalMotionStyle(modalOrigin)} role="dialog" aria-modal="true" aria-labelledby="purchase-flow-title">
             <form onSubmit={submit} noValidate>

@@ -204,6 +204,19 @@ export function MobileNav({ nav, currentPath }: { nav: NavItem[]; currentPath?: 
   }, [open]);
 
   useEffect(() => {
+    if (!open) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat) return;
+      event.preventDefault();
+      setOpen(false);
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [open]);
+
+  useEffect(() => {
     setOpen(false);
   }, [activePath]);
 

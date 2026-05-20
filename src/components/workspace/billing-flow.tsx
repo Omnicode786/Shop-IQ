@@ -37,6 +37,7 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
   const [modalOrigin, setModalOrigin] = useState<ModalMotionOrigin | null>(null);
   const closeTimer = useRef<number | null>(null);
   const originElementRef = useRef<Element | null>(null);
+  const closeFromKeyboardRef = useRef<() => void>(() => {});
   const [createCustomer, setCreateCustomer] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -126,6 +127,20 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
       closeTimer.current = null;
     }, MODAL_EXIT_MS);
   }
+  closeFromKeyboardRef.current = () => close();
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat || closing) return;
+      event.preventDefault();
+      closeFromKeyboardRef.current();
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [closing, open]);
 
   function stopWithMessage(text: string) {
     setMessage(text);
@@ -215,7 +230,7 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
       </Button>
       {open ? (
         <ModalPortal>
-        <div className="crud-modal-layer" data-state={closing ? "closing" : "open"} role="presentation" onKeyDown={(event) => event.key === "Escape" && close()}>
+        <div className="crud-modal-layer" data-state={closing ? "closing" : "open"} role="presentation">
           <button type="button" className="crud-modal-backdrop" data-state={closing ? "closing" : "open"} aria-label="Close billing flow" onClick={() => close()} />
           <div className="crud-modal motion-modal billing-flow-modal" data-state={closing ? "closing" : "open"} style={modalMotionStyle(modalOrigin)} role="dialog" aria-modal="true" aria-labelledby="billing-flow-title">
             <form onSubmit={submit} noValidate>
