@@ -1,28 +1,53 @@
 import { UserCog } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
-import { DonutBreakdownCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { can, canCreateStaffRole, canManageStaffMember } from "@/lib/permissions";
-import { statusSegments } from "@/lib/chart-helpers";
 import { prisma } from "@/lib/prisma";
+import { contains, dateRange, paginationMeta, readTableState, type TableSearchParams } from "@/lib/table-pagination";
 import { formatDate, toPlain } from "@/lib/utils";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
-export default async function StaffPage() {
+export default async function StaffPage({ searchParams }: { searchParams?: TableSearchParams }) {
   const user = await getCurrentUser();
-  const staffRaw = await prisma.user.findMany({ where: { shopId: user!.shopId }, orderBy: { createdAt: "desc" }, select: { id: true, name: true, email: true, role: true, status: true, designation: true, phone: true, cnic: true, shift: true, branchArea: true, joiningDate: true, createdAt: true } });
+  const table = readTableState(searchParams);
+  const staffFilters: any[] = [];
+  if (table.query) {
+    staffFilters.push({
+      OR: [
+        { name: contains(table.query) },
+        { email: contains(table.query) },
+        { phone: contains(table.query) },
+        { designation: contains(table.query) },
+        { cnic: contains(table.query) },
+        { shift: contains(table.query) },
+        { branchArea: contains(table.query) }
+      ]
+    });
+  }
+  if (table.status) staffFilters.push({ status: table.status });
+  if (table.facet) staffFilters.push({ role: table.facet });
+  const staffDateRange = dateRange("createdAt", table.dateFrom, table.dateTo);
+  if (staffDateRange) staffFilters.push(staffDateRange);
+  const staffWhere = { shopId: user!.shopId, ...(staffFilters.length ? { AND: staffFilters } : {}) };
+  const staffSelect = { id: true, name: true, email: true, role: true, status: true, designation: true, phone: true, cnic: true, shift: true, branchArea: true, joiningDate: true, createdAt: true };
+  const [staffRaw, staffTotal, totalMembers, activeMembers, managerMembers, adminMembers, staffMembers] = await Promise.all([
+    prisma.user.findMany({ where: staffWhere, orderBy: { createdAt: "desc" }, skip: table.skip, take: table.take, select: staffSelect }),
+    prisma.user.count({ where: staffWhere }),
+    prisma.user.count({ where: { shopId: user!.shopId } }),
+    prisma.user.count({ where: { shopId: user!.shopId, status: "ACTIVE" } }),
+    prisma.user.count({ where: { shopId: user!.shopId, role: "MANAGER" } }),
+    prisma.user.count({ where: { shopId: user!.shopId, role: "ADMIN" } }),
+    prisma.user.count({ where: { shopId: user!.shopId, role: "STAFF" } })
+  ]);
   const staff = toPlain(staffRaw).map((member: any) => ({ ...member, joinedDisplay: formatDate(member.joiningDate || member.createdAt), password: "", canManage: canManageStaffMember(user?.role, member.role, member.id, user?.id) }));
   const roleOptions = (["ADMIN", "MANAGER", "STAFF"] as const)
     .filter((role) => canCreateStaffRole(user?.role, role))
     .map((role) => ({ label: role === "ADMIN" ? "Admin" : role === "MANAGER" ? "Manager" : "Staff", value: role }));
-  const roleRows = statusSegments(staff, (member: any) => member.role);
 
   return (
-    <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "staff")} user={user}>
+    <>
       <SectionHeader eyebrow="Team" title="Staff and shop access" description="Add team members, assign roles, reset access and suspend accounts without exposing password hashes." />
       <div className="module-command-grid">
         <ModuleHero
@@ -32,9 +57,9 @@ export default async function StaffPage() {
           icon={UserCog}
           badge="Role based"
           stats={[
-            { label: "Members", value: staff.length },
-            { label: "Active", value: staff.filter((member: any) => member.status === "ACTIVE").length },
-            { label: "Managers", value: staff.filter((member: any) => member.role === "MANAGER").length }
+            { label: "Members", value: totalMembers },
+            { label: "Active", value: activeMembers },
+            { label: "Managers", value: managerMembers }
           ]}
         />
         <ModuleInsightPanel
@@ -42,24 +67,14 @@ export default async function StaffPage() {
           description="Admins can manage all roles; managers can add and maintain staff accounts without elevating privileges."
           icon={UserCog}
           insights={[
-            { label: "Admins", value: staff.filter((member: any) => member.role === "ADMIN").length },
-            { label: "Managers", value: staff.filter((member: any) => member.role === "MANAGER").length },
-            { label: "Staff", value: staff.filter((member: any) => member.role === "STAFF").length }
+            { label: "Admins", value: adminMembers },
+            { label: "Managers", value: managerMembers },
+            { label: "Staff", value: staffMembers }
           ]}
         />
       </div>
       <div className="mt-6">
-        <MetricCard icon={UserCog} title="Team members" value={staff.length} />
-      </div>
-      <div className="mt-6">
-        <DonutBreakdownCard
-          title="Role mix"
-          description="Admin, manager and staff coverage in this workspace."
-          data={roleRows}
-          centerValue={`${staff.length}`}
-          centerLabel="Members"
-          badge="Roles"
-        />
+        <MetricCard icon={UserCog} title="Team members" value={totalMembers} />
       </div>
       <div className="mt-6">
         <CrudManager
@@ -67,6 +82,16 @@ export default async function StaffPage() {
           description="Admins can manage all roles. Managers can add and maintain staff accounts."
           endpoint="/api/staff"
           rows={staff}
+          pagination={paginationMeta(table, staffTotal)}
+          filterConfig={{
+            statusKey: "status",
+            statusOptions: ["ACTIVE", "INVITED", "SUSPENDED"],
+            facetKey: "role",
+            facetLabel: "Role",
+            facetOptions: ["ADMIN", "MANAGER", "STAFF"],
+            dateKey: "createdAt",
+            dateLabel: "Created"
+          }}
           fields={[
             { key: "name", label: "Name", required: true },
             { key: "email", label: "Email", type: "email", required: true },
@@ -99,6 +124,6 @@ export default async function StaffPage() {
           deleteVerb="Suspend"
         />
       </div>
-    </AppShell>
+    </>
   );
 }

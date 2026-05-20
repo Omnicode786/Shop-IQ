@@ -1,30 +1,48 @@
 import { CreditCard } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
-import { ComparativeBarsCard, DonutBreakdownCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { can, canReadSupplierCashflow, canUsePaymentDirection } from "@/lib/permissions";
-import { buildDailySeries, sumByGroup } from "@/lib/chart-helpers";
 import { prisma } from "@/lib/prisma";
+import { contains, dateRange, paginationMeta, readTableState, type TableSearchParams } from "@/lib/table-pagination";
 import { formatDate, toPlain } from "@/lib/utils";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
 function money(value: any) {
   return `PKR ${Number(value || 0).toLocaleString()}`;
 }
 
-function compactMoney(value: number) {
-  return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
-}
-
-export default async function Payments() {
+export default async function Payments({ searchParams }: { searchParams?: TableSearchParams }) {
   const user = await getCurrentUser();
   const canSeeSupplierSide = canReadSupplierCashflow(user?.role);
-  const [paymentsRaw, customersRaw, suppliersRaw, invoicesRaw, purchasesRaw] = await Promise.all([
-    prisma.payment.findMany({ where: { shopId: user!.shopId, ...(canSeeSupplierSide ? {} : { direction: "CUSTOMER_IN" as const }) }, include: { customer: true, supplier: true, invoice: true, purchase: true }, orderBy: { paidAt: "desc" }, take: 150 }),
+  const table = readTableState(searchParams);
+  const paymentFilters: any[] = [];
+  if (!canSeeSupplierSide) paymentFilters.push({ direction: "CUSTOMER_IN" as const });
+  if (table.query) {
+    paymentFilters.push({
+      OR: [
+        { reference: contains(table.query) },
+        { notes: contains(table.query) },
+        { customer: { is: { name: contains(table.query) } } },
+        { supplier: { is: { name: contains(table.query) } } },
+        { invoice: { is: { invoiceNo: contains(table.query) } } },
+        { purchase: { is: { purchaseNo: contains(table.query) } } }
+      ]
+    });
+  }
+  if (table.facet) {
+    if (["CUSTOMER_IN", "SUPPLIER_OUT"].includes(table.facet)) paymentFilters.push({ direction: table.facet });
+    else paymentFilters.push({ method: table.facet });
+  }
+  const paymentDateRange = dateRange("paidAt", table.dateFrom, table.dateTo);
+  if (paymentDateRange) paymentFilters.push(paymentDateRange);
+  const paymentWhere = { shopId: user!.shopId, ...(paymentFilters.length ? { AND: paymentFilters } : {}) };
+  const [paymentsRaw, paymentsTotal, incomingAgg, outgoingAgg, customersRaw, suppliersRaw, invoicesRaw, purchasesRaw] = await Promise.all([
+    prisma.payment.findMany({ where: paymentWhere, include: { customer: true, supplier: true, invoice: true, purchase: true }, orderBy: { paidAt: "desc" }, skip: table.skip, take: table.take }),
+    prisma.payment.count({ where: paymentWhere }),
+    prisma.payment.aggregate({ where: { shopId: user!.shopId, direction: "CUSTOMER_IN" }, _sum: { amount: true } }),
+    canSeeSupplierSide ? prisma.payment.aggregate({ where: { shopId: user!.shopId, direction: "SUPPLIER_OUT" }, _sum: { amount: true } }) : Promise.resolve({ _sum: { amount: 0 } }),
     prisma.customer.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } }),
     canSeeSupplierSide ? prisma.supplier.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } }) : Promise.resolve([]),
     prisma.invoice.findMany({ where: { shopId: user!.shopId, status: { not: "CANCELLED" } }, orderBy: { invoiceDate: "desc" }, take: 150 }),
@@ -41,16 +59,8 @@ export default async function Payments() {
   const suppliers = toPlain(suppliersRaw);
   const invoices = toPlain(invoicesRaw);
   const purchases = toPlain(purchasesRaw);
-  const incoming = payments.filter((payment: any) => payment.direction === "CUSTOMER_IN").reduce((sum: number, payment: any) => sum + Number(payment.amount), 0);
-  const outgoing = payments.filter((payment: any) => payment.direction === "SUPPLIER_OUT").reduce((sum: number, payment: any) => sum + Number(payment.amount), 0);
-  const cashflowTrend = buildDailySeries(
-    payments,
-    (payment: any) => payment.paidAt,
-    (payment: any) => payment.direction === "CUSTOMER_IN" ? Number(payment.amount) : 0,
-    14,
-    (payment: any) => payment.direction === "SUPPLIER_OUT" ? Number(payment.amount) : 0
-  );
-  const methodMix = sumByGroup(payments, (payment: any) => payment.method?.replace(/_/g, " "), (payment: any) => Number(payment.amount), 7);
+  const incoming = Number(incomingAgg._sum.amount || 0);
+  const outgoing = Number(outgoingAgg._sum.amount || 0);
   const directionOptions = [
     { label: "Customer in", value: "CUSTOMER_IN" },
     ...(canUsePaymentDirection(user?.role, "SUPPLIER_OUT") ? [{ label: "Supplier out", value: "SUPPLIER_OUT" }] : [])
@@ -68,7 +78,7 @@ export default async function Payments() {
   ];
 
   return (
-    <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "payments")} user={user}>
+    <>
       <SectionHeader eyebrow="Payments" title="Cashflow and settlement timeline" description="Track customer receipts, supplier payouts, payment modes and references with balance-safe edits." />
       <div className="module-command-grid">
         <ModuleHero
@@ -80,7 +90,7 @@ export default async function Payments() {
           stats={[
             { label: "Incoming", value: money(incoming) },
             { label: canSeeSupplierSide ? "Outgoing" : "Receipt mode", value: canSeeSupplierSide ? money(outgoing) : "Customer only" },
-            { label: "Records", value: payments.length }
+            { label: "Records", value: paymentsTotal }
           ]}
         />
         <ModuleInsightPanel
@@ -99,32 +109,20 @@ export default async function Payments() {
         <MetricCard icon={CreditCard} title={canSeeSupplierSide ? "Outgoing" : "Receipt-only mode"} value={canSeeSupplierSide ? money(outgoing) : "Customer in"} tone={canSeeSupplierSide ? "rose" : "violet"} />
         <MetricCard icon={CreditCard} title="Net movement" value={money(incoming - outgoing)} tone="amber" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <ComparativeBarsCard
-          title="Settlement rhythm"
-          description={canSeeSupplierSide ? "Receipts and payouts in the same view, so cash movement is easy to read." : "Customer receipts across the latest operating window."}
-          data={cashflowTrend}
-          valueLabel="Incoming"
-          secondaryLabel="Outgoing"
-          badge="14 days"
-          format="money"
-        />
-        <DonutBreakdownCard
-          title="Payment method mix"
-          description="How money is moving through cash, bank, card and wallet channels."
-          data={methodMix}
-          centerValue={compactMoney(incoming + outgoing)}
-          centerLabel="Moved"
-          badge="Methods"
-          format="money"
-        />
-      </div>
       <div className="mt-6">
         <CrudManager
           title="Payment records"
           description={canSeeSupplierSide ? "Record receipts and payouts. Updates and deletes automatically reverse and reapply invoice, purchase and ledger effects." : "Record customer receipts with invoice links. Supplier payout tools are reserved for managers and admins."}
           endpoint="/api/payments"
           rows={payments}
+          pagination={paginationMeta(table, paymentsTotal)}
+          filterConfig={{
+            facetKey: "direction",
+            facetLabel: "Direction",
+            facetOptions: canSeeSupplierSide ? ["CUSTOMER_IN", "SUPPLIER_OUT"] : ["CUSTOMER_IN"],
+            dateKey: "paidAt",
+            dateLabel: "Paid date"
+          }}
           fields={paymentFields}
           columns={[
             { key: "partyName", label: "Party" },
@@ -140,6 +138,6 @@ export default async function Payments() {
           createLabel="Record payment"
         />
       </div>
-    </AppShell>
+    </>
   );
 }

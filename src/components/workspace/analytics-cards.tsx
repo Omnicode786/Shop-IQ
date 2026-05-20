@@ -7,6 +7,9 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -27,11 +30,6 @@ const palette = [
   "hsl(var(--shopiq-chart-5))",
   "hsl(var(--shopiq-chart-6))"
 ];
-
-const DONUT_SIZE = 240;
-const DONUT_CENTER = DONUT_SIZE / 2;
-const DONUT_RADIUS = 82;
-const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
 
 function tooltipStyle() {
   return {
@@ -87,24 +85,6 @@ function EmptyChartState({ label = "No role-visible chart data yet" }: { label?:
       <span>{label}</span>
     </div>
   );
-}
-
-function buildDonutSegments(data: SegmentDatum[], total: number) {
-  const positive = normalizeSegments(data).map((item, index) => ({ ...item, sourceIndex: index }));
-  const gap = positive.length > 1 ? 5 : 0;
-  let offset = 0;
-
-  return positive.map((item) => {
-    const rawLength = (item.value / Math.max(total, 1)) * DONUT_CIRCUMFERENCE;
-    const segment = {
-      ...item,
-      length: Math.max(rawLength - gap, 0),
-      offset,
-      percentValue: (item.value / Math.max(total, 1)) * 100
-    };
-    offset += rawLength;
-    return segment;
-  });
 }
 
 function ChartHeader({
@@ -181,7 +161,17 @@ export function TrendAreaCard({
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} minTickGap={12} />
                 <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} tickFormatter={(value) => formatAxisValue(Number(value), format)} width={38} />
                 <Tooltip contentStyle={tooltipStyle()} formatter={(val: number) => [formatValue(Number(val), format), "Value"]} />
-                <Area type="monotone" dataKey="value" stroke="hsl(var(--shopiq-accent))" strokeWidth={3} fill={`url(#${gradientId})`} isAnimationActive={false} />
+                <Area
+                  type="monotone"
+                  dataKey="value"
+                  stroke="hsl(var(--shopiq-accent))"
+                  strokeWidth={3}
+                  fill={`url(#${gradientId})`}
+                  isAnimationActive
+                  animationBegin={120}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
@@ -227,8 +217,8 @@ export function ComparativeBarsCard({
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} minTickGap={12} />
                 <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} tickFormatter={(value) => formatAxisValue(Number(value), format)} width={38} />
                 <Tooltip contentStyle={tooltipStyle()} formatter={(val: number, name) => [formatValue(Number(val), format), name === "secondary" ? cleanSecondaryLabel : cleanValueLabel]} />
-                <Bar dataKey="value" radius={[14, 14, 5, 5]} fill="hsl(var(--shopiq-accent))" isAnimationActive={false} />
-                {hasSecondary ? <Bar dataKey="secondary" radius={[14, 14, 5, 5]} fill="hsl(var(--shopiq-accent-3))" isAnimationActive={false} /> : null}
+                <Bar dataKey="value" radius={[14, 14, 5, 5]} fill="hsl(var(--shopiq-accent))" isAnimationActive animationBegin={120} animationDuration={760} />
+                {hasSecondary ? <Bar dataKey="secondary" radius={[14, 14, 5, 5]} fill="hsl(var(--shopiq-accent-3))" isAnimationActive animationBegin={220} animationDuration={760} /> : null}
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -262,12 +252,16 @@ export function DonutBreakdownCard({
   format?: ValueFormat;
 }) {
   const [activeName, setActiveName] = useState<string | null>(null);
-  const chartData = normalizeSegments(data);
-  const total = chartData.reduce((sum, item) => sum + Number(item.value || 0), 0);
-  const segments = buildDonutSegments(chartData, total);
+  const baseData = normalizeSegments(data);
+  const total = baseData.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const chartData = baseData.map((item, index) => ({
+    ...item,
+    fill: palette[index % palette.length],
+    percentValue: (Number(item.value || 0) / Math.max(total, 1)) * 100
+  }));
   const topSegment = [...chartData].sort((a, b) => Number(b.value || 0) - Number(a.value || 0))[0];
   const topPercent = topSegment ? (Number(topSegment.value || 0) / Math.max(total, 1)) * 100 : 0;
-  const activeSegment = segments.find((segment) => segment.name === activeName) || null;
+  const activeSegment = chartData.find((segment) => segment.name === activeName) || null;
   const cleanCenterLabel = cleanText(centerLabel) || "Total";
   const cleanCenterValue = cleanText(centerValue) || formatValue(total, format);
   const featuredName = activeSegment?.name || topSegment?.name || "";
@@ -280,38 +274,45 @@ export function DonutBreakdownCard({
       <CardContent className="p-5 pt-0">
         <div className="analytics-donut-shell">
           <div className="analytics-donut-visual">
-            <svg className="analytics-donut-svg" viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} role="img" aria-label={`${title}: ${cleanCenterValue}`} onMouseLeave={() => setActiveName(null)}>
-              <title>{`${title}: ${cleanCenterValue}`}</title>
-              <circle
-                className="analytics-donut-base"
-                cx={DONUT_CENTER}
-                cy={DONUT_CENTER}
-                r={DONUT_RADIUS}
-              />
-              {segments.map((segment) => (
-                <circle
-                  key={segment.name}
-                  className="analytics-donut-slice"
-                  cx={DONUT_CENTER}
-                  cy={DONUT_CENTER}
-                  r={DONUT_RADIUS}
-                  tabIndex={0}
-                  aria-label={`${segment.name}: ${formatValue(segment.value, format)}, ${formatPercentLabel(segment.percentValue, segment.value)}`}
-                  data-active={activeName === segment.name || undefined}
-                  strokeDasharray={`${segment.length} ${Math.max(DONUT_CIRCUMFERENCE - segment.length, 0)}`}
-                  strokeDashoffset={-segment.offset}
-                  onMouseEnter={() => setActiveName(segment.name)}
-                  onFocus={() => setActiveName(segment.name)}
-                  onBlur={() => setActiveName(null)}
-                  style={{
-                    ["--slice-color" as string]: palette[segment.sourceIndex % palette.length],
-                    animationDelay: `${segment.sourceIndex * 70}ms`
-                  }}
-                >
-                  <title>{`${segment.name}: ${formatValue(segment.value, format)} (${formatPercentLabel(segment.percentValue, segment.value)})`}</title>
-                </circle>
-              ))}
-            </svg>
+            <div className="analytics-donut-chart" onMouseLeave={() => setActiveName(null)}>
+              {chartData.length ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Tooltip
+                      contentStyle={tooltipStyle()}
+                      formatter={(val: number, name) => [formatValue(Number(val), format), String(name)]}
+                    />
+                    <Pie
+                      data={chartData}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius="58%"
+                      outerRadius="86%"
+                      paddingAngle={4}
+                      cornerRadius={10}
+                      stroke="hsl(var(--card))"
+                      strokeWidth={4}
+                      isAnimationActive
+                      animationBegin={140}
+                      animationDuration={920}
+                      animationEasing="ease-out"
+                      onMouseEnter={(_entry: unknown, index: number) => setActiveName(chartData[index]?.name ?? null)}
+                      onMouseLeave={() => setActiveName(null)}
+                    >
+                      {chartData.map((segment) => (
+                        <Cell
+                          key={segment.name}
+                          fill={segment.fill}
+                          opacity={!activeName || activeName === segment.name ? 1 : 0.46}
+                        />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyChartState />
+              )}
+            </div>
             <div className="analytics-donut-center">
               <span title={activeSegment ? activeSegment.name : cleanCenterLabel}>{activeSegment ? activeSegment.name : cleanCenterLabel}</span>
               <strong title={activeSegment ? formatPercentLabel(activeSegment.percentValue, activeSegment.value) : cleanCenterValue}>{activeSegment ? formatPercentLabel(activeSegment.percentValue, activeSegment.value) : cleanCenterValue}</strong>
@@ -324,7 +325,7 @@ export function DonutBreakdownCard({
             ) : null}
             {activeSegment ? (
               <div className="analytics-donut-hover-card">
-                <span className="analytics-legend-dot" style={{ ["--dot" as string]: palette[activeSegment.sourceIndex % palette.length] }}>{activeSegment.name}</span>
+                <span className="analytics-legend-dot" style={{ ["--dot" as string]: activeSegment.fill }}>{activeSegment.name}</span>
                 <strong>{formatValue(activeSegment.value, format)}</strong>
                 <em>{formatPercentLabel(activeSegment.percentValue, activeSegment.value)} of total</em>
               </div>
@@ -348,9 +349,9 @@ export function DonutBreakdownCard({
                   onBlur={() => setActiveName(null)}
                 >
                   <div className="min-w-0">
-                    <span className="analytics-legend-dot" title={item.name} style={{ ["--dot" as string]: palette[index % palette.length] }}>{item.name}</span>
+                    <span className="analytics-legend-dot" title={item.name} style={{ ["--dot" as string]: item.fill }}>{item.name}</span>
                     <div className="analytics-donut-track">
-                      <i style={{ width: `${Math.max(percent, value ? 7 : 0)}%`, background: palette[index % palette.length] }} />
+                      <i style={{ width: `${Math.max(percent, value ? 7 : 0)}%`, background: item.fill }} />
                     </div>
                   </div>
                   <div className="analytics-donut-percent">

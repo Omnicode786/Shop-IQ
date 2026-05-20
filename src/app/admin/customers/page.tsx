@@ -1,44 +1,61 @@
 import { Users, WalletCards } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
-import { RankedBarsCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
-import { buildDailySeries, topRows } from "@/lib/chart-helpers";
 import { can } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { contains, dateRange, paginationMeta, readTableState, type TableSearchParams } from "@/lib/table-pagination";
 import { toPlain } from "@/lib/utils";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
 function money(value: any) {
   return `PKR ${Number(value || 0).toLocaleString()}`;
 }
 
-function compactMoney(value: number) {
-  return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
-}
-
-export default async function Customers() {
+export default async function Customers({ searchParams }: { searchParams?: TableSearchParams }) {
   const user = await getCurrentUser();
-  const customersRaw = await prisma.customer.findMany({ where: { shopId: user!.shopId }, include: { invoices: true, payments: true }, orderBy: { balance: "desc" } });
+  const table = readTableState(searchParams);
+  const customerFilters: any[] = [];
+  if (table.query) {
+    customerFilters.push({
+      OR: [
+        { name: contains(table.query) },
+        { phone: contains(table.query) },
+        { whatsapp: contains(table.query) },
+        { email: contains(table.query) },
+        { address: contains(table.query) },
+        { area: contains(table.query) },
+        { city: contains(table.query) },
+        { customerType: contains(table.query) },
+        { loyaltyCardNo: contains(table.query) },
+        { notes: contains(table.query) }
+      ]
+    });
+  }
+  if (table.facet) customerFilters.push({ customerType: table.facet });
+  const customerDateRange = dateRange("updatedAt", table.dateFrom, table.dateTo);
+  if (customerDateRange) customerFilters.push(customerDateRange);
+  const customerWhere = { shopId: user!.shopId, ...(customerFilters.length ? { AND: customerFilters } : {}) };
+  const [customersRaw, customersTotal, customerCount, customerBalance] = await Promise.all([
+    prisma.customer.findMany({ where: customerWhere, include: { _count: { select: { invoices: true } } }, orderBy: { balance: "desc" }, skip: table.skip, take: table.take }),
+    prisma.customer.count({ where: customerWhere }),
+    prisma.customer.count({ where: { shopId: user!.shopId } }),
+    prisma.customer.aggregate({ where: { shopId: user!.shopId }, _sum: { balance: true } })
+  ]);
   const customers = toPlain(customersRaw).map((customer: any) => ({
     ...customer,
-    invoiceCount: customer.invoices.length,
+    invoiceCount: customer._count?.invoices || 0,
     loyaltyDisplay: customer.loyaltyCardNo ? `${customer.loyaltyCardNo} / ${Number(customer.loyaltyPoints || 0).toLocaleString()} pts` : "-",
     areaDisplay: [customer.area, customer.city].filter(Boolean).join(", ") || customer.address || "-",
     customerTypeDisplay: customer.customerType || "Retail",
     balanceDisplay: money(customer.balance),
     creditLimitDisplay: money(customer.creditLimit)
   }));
-  const dues = customers.reduce((sum: number, customer: any) => sum + Math.max(Number(customer.balance), 0), 0);
-  const allPayments = customers.flatMap((customer: any) => customer.payments || []);
-  const paymentTrend = buildDailySeries(allPayments, (payment: any) => payment.paidAt, (payment: any) => Number(payment.amount), 14);
-  const dueRank = topRows(customers, (customer: any) => customer.name, (customer: any) => Number(customer.balance), 6);
+  const dues = Math.max(Number(customerBalance._sum.balance || 0), 0);
 
   return (
-    <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "customers")} user={user}>
+    <>
       <SectionHeader eyebrow="Customers" title="Customer ledger and loyalty workspace" description="Track balances, contact details, credit limits and payment behavior with role-based actions." />
       <div className="module-command-grid">
         <ModuleHero
@@ -48,9 +65,9 @@ export default async function Customers() {
           icon={Users}
           badge="Ledger view"
           stats={[
-            { label: "Customers", value: customers.length },
+            { label: "Customers", value: customerCount },
             { label: "Outstanding", value: money(dues) },
-            { label: "With invoices", value: customers.filter((customer: any) => customer.invoiceCount > 0).length }
+            { label: "Showing", value: customers.length }
           ]}
         />
         <ModuleInsightPanel
@@ -58,32 +75,15 @@ export default async function Customers() {
           description="Use this module to spot high-balance customers and keep contact data clean for reminders."
           icon={WalletCards}
           insights={[
-            { label: "Total accounts", value: customers.length },
+            { label: "Total accounts", value: customerCount },
             { label: "Receivables", value: money(dues) },
-            { label: "Average balance", value: money(customers.length ? dues / customers.length : 0) }
+            { label: "Average balance", value: money(customerCount ? dues / customerCount : 0) }
           ]}
         />
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <MetricCard icon={Users} title="Customers" value={customers.length} />
+        <MetricCard icon={Users} title="Customers" value={customerCount} />
         <MetricCard icon={WalletCards} title="Outstanding receivables" value={money(dues)} tone="amber" />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
-        <TrendAreaCard
-          title="Collection rhythm"
-          description="Customer payments received across the latest activity window."
-          value={compactMoney(allPayments.reduce((sum: number, payment: any) => sum + Number(payment.amount), 0))}
-          caption="Recent customer receipts"
-          data={paymentTrend}
-          badge="Receipts"
-          format="money"
-        />
-        <RankedBarsCard
-          title="Top receivables"
-          description="The accounts most responsible for outstanding customer balance."
-          rows={dueRank}
-          format="money"
-        />
       </div>
       <div className="mt-6">
         <CrudManager
@@ -91,6 +91,14 @@ export default async function Customers() {
           description="Staff can create and update customer accounts; admins and managers can remove unused records."
           endpoint="/api/customers"
           rows={customers}
+          pagination={paginationMeta(table, customersTotal)}
+          filterConfig={{
+            facetKey: "customerTypeDisplay",
+            facetLabel: "Type",
+            facetOptions: ["WALK_IN_LOYALTY", "FAMILY_MONTHLY", "OFFICE_PANTRY", "BULK_BUYER"],
+            dateKey: "updatedAt",
+            dateLabel: "Updated"
+          }}
           fields={[
             { key: "name", label: "Customer name", required: true },
             { key: "phone", label: "Phone" },
@@ -123,6 +131,6 @@ export default async function Customers() {
           createLabel="Add customer"
         />
       </div>
-    </AppShell>
+    </>
   );
 }

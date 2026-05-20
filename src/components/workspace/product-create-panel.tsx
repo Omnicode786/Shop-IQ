@@ -6,6 +6,7 @@ import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/lib/toast";
 
 const initialForm = { name: "", sku: "", brand: "", costPrice: "", salePrice: "", stockQty: "", reorderLevel: "" };
 
@@ -34,11 +35,14 @@ export function ProductCreatePanel() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Product could not be saved.");
+      toast.success("Product created successfully.");
       setForm(initialForm);
       setOpen(false);
       router.refresh();
     } catch (error: any) {
-      setMessage(error?.message || "Product could not be saved.");
+      const errorMessage = error?.message || "Product could not be saved.";
+      setMessage(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }

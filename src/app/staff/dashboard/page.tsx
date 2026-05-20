@@ -1,13 +1,12 @@
-import { DollarSign, Package, ReceiptText, TrendingUp } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
+import { DollarSign, Package, ReceiptText, Users } from "lucide-react";
 import { ActivityFeed } from "@/components/workspace/activity-feed";
-import { BubbleInsightCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
+import { TrendAreaCard } from "@/components/workspace/analytics-cards";
 import { DataTable } from "@/components/workspace/data-table";
 import { MetricCard } from "@/components/workspace/metric-card";
+import { QuickActions } from "@/components/workspace/quick-actions";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { STAFF_NAV } from "@/lib/constants";
 import { getCurrentUser } from "@/lib/auth";
 import { getDashboardSnapshot } from "@/lib/data";
 
@@ -15,16 +14,12 @@ function money(value: number) {
   return `PKR ${Math.round(value).toLocaleString()}`;
 }
 
-function compactMoney(value: number) {
-  return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
-}
-
 export default async function StaffDashboard() {
   const user = await getCurrentUser();
   const snapshot = await getDashboardSnapshot(user!.shopId, user?.role);
 
   return (
-    <AppShell nav={STAFF_NAV} heading="Staff Workspace" currentPath="/staff/dashboard" user={user}>
+    <>
       <SectionHeader
         eyebrow="Staff dashboard"
         title="Sales, stock and customer operations"
@@ -32,49 +27,37 @@ export default async function StaffDashboard() {
         action={<Badge variant="secondary">Front counter mode</Badge>}
       />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-3">
         <MetricCard icon={DollarSign} title="Sales pulse" value={money(snapshot.metrics.todaySales)} helper={snapshot.metrics.salesWindowLabel} tone="emerald" />
-        <MetricCard icon={TrendingUp} title="Revenue window" value={money(snapshot.metrics.monthlyRevenue)} helper={snapshot.metrics.revenueWindowLabel} />
         <MetricCard icon={Package} title="Low stock" value={snapshot.metrics.lowStockCount} helper="Needs manager attention" tone="amber" />
         <MetricCard icon={ReceiptText} title="Open dues" value={money(snapshot.metrics.customerDues)} helper="Customer receivables" tone="violet" />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+      <div className="mt-6">
+        <QuickActions
+          title="Counter shortcuts"
+          actions={[
+            { href: "/staff/billing", label: "Create invoice", description: "Open guided billing", icon: ReceiptText, tone: "blue" },
+            { href: "/staff/products", label: "Check stock", description: "Find inventory quickly", icon: Package, tone: "amber" },
+            { href: "/staff/customers", label: "Add customer", description: "Update customer ledger", icon: Users, tone: "emerald" },
+            { href: "/staff/payments", label: "Record payment", description: "Capture customer receipts", icon: DollarSign, tone: "violet" }
+          ]}
+        />
+      </div>
+
+      <div className="mt-5">
         <TrendAreaCard
           title="Counter sales rhythm"
-          description="Daily gross sales so staff can feel the pace of the shop."
+          description="Daily gross sales for the active window."
           value={money(snapshot.metrics.monthlyRevenue)}
           caption={snapshot.metrics.revenueWindowLabel}
           data={snapshot.charts.revenueTimeline}
           badge="Sales"
           format="money"
         />
-        <Card className="dashboard-hero overflow-hidden">
-          <CardContent className="p-6">
-            <Badge variant="outline" className="hero-badge">Today focus</Badge>
-            <h2 className="mt-4 text-3xl font-semibold tracking-normal text-white">Serve faster, check stock smarter.</h2>
-            <p className="mt-3 text-sm leading-7 text-white/64">
-              Use billing, products, customers and payments from the side navigation. Low-stock priorities and activity are shown below.
-            </p>
-          </CardContent>
-        </Card>
       </div>
 
-      <div className="mt-6">
-        <BubbleInsightCard
-          title="Counter board"
-          description="Numbers staff need before billing, lookup or customer follow-up."
-          bubbles={[
-            { label: "Sales", value: compactMoney(snapshot.metrics.todaySales), size: "lg" },
-            { label: "Low stock", value: snapshot.metrics.lowStockCount, size: "md" },
-            { label: "Customers", value: snapshot.customers.length, size: "sm" },
-            { label: "Open dues", value: compactMoney(snapshot.metrics.customerDues), size: "sm" }
-          ]}
-          badge="Live"
-        />
-      </div>
-
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+      <div className="mt-5 grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
         <DataTable title="Low stock priorities" description="Products that need reorder attention before sales are blocked.">
           <table className="w-full min-w-[520px] text-sm">
             <tbody>
@@ -99,6 +82,6 @@ export default async function StaffDashboard() {
           </Card>
         </div>
       </div>
-    </AppShell>
+    </>
   );
 }

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider, THEME_STORAGE_KEY, UI_MODE_STORAGE_KEY, SHADCN_THEME_STORAGE_KEY } from "@/components/theme-provider";
+import { ToastProvider } from "@/components/ui/toast-provider";
 
 export const metadata: Metadata = {
   title: "ShopIQ",
@@ -18,5 +19,5 @@ function ThemeScript() {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html lang="en" suppressHydrationWarning><head><ThemeScript /></head><body><ThemeProvider>{children}</ThemeProvider></body></html>;
+  return <html lang="en" suppressHydrationWarning><head><ThemeScript /></head><body><ThemeProvider>{children}<ToastProvider /></ThemeProvider></body></html>;
 }

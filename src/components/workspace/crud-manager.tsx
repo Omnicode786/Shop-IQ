@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState, type ComponentProps, type FormEvent, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
-import { Edit3, Eye, Info, Plus, Search, ShieldAlert, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ComponentProps, type FormEvent, type MouseEvent, type ReactNode } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ChevronLeft, ChevronRight, Edit3, Eye, Filter, Info, Plus, Search, ShieldAlert, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { captureModalOrigin, modalMotionStyle, ModalPortal, type ModalMotionOrigin } from "@/components/workspace/modal-portal";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 type Option = { label: string; value: string };
@@ -28,6 +30,27 @@ type Field = {
   autoComplete?: string;
 };
 type Column = { key: string; label: string; render?: (row: any) => ReactNode; className?: string };
+type PaginationMeta = {
+  page: number;
+  pageSize: number;
+  total: number;
+  query?: string;
+  status?: string;
+  facet?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  sort?: string;
+  order?: "asc" | "desc";
+};
+type FilterConfig = {
+  statusKey?: string | null;
+  statusOptions?: string[];
+  facetKey?: string | null;
+  facetLabel?: string;
+  facetOptions?: string[];
+  dateKey?: string | null;
+  dateLabel?: string;
+};
 type Props = {
   title: string;
   description?: string;
@@ -43,12 +66,17 @@ type Props = {
   canUpdateRowKey?: string;
   canDeleteRowKey?: string;
   createLabel?: string;
+  createAction?: ReactNode;
   deleteLabel?: string;
   deleteVerb?: string;
   emptyState?: string;
   submitShape?: "invoice" | "purchase";
   canViewDetails?: boolean;
+  pagination?: PaginationMeta;
+  filterConfig?: FilterConfig;
 };
+
+const MODAL_EXIT_MS = 380;
 
 function valueFor(row: any, key: string) {
   const value = row?.[key];
@@ -180,8 +208,48 @@ function cellContent(column: Column, row: any) {
   return String(value);
 }
 
+function isNumericColumn(key: string) {
+  return /(amount|balance|cost|discount|due|limit|paid|payable|price|quantity|reorder|revenue|score|stock|tax|total|value|qty|sold|count)$/i.test(key);
+}
+
+function isDateLikeKey(key: string) {
+  return /(date|createdAt|updatedAt|paidAt|visitAt|joiningDate)$/i.test(key);
+}
+
+function rowDateValue(row: any, key?: string | null) {
+  if (!key) return null;
+  const value = row?.[key];
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function startOfLocalDay(value: string) {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function endOfLocalDay(value: string) {
+  if (!value) return null;
+  const date = new Date(`${value}T23:59:59.999`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function distinctValues(rows: any[], key?: string | null) {
+  if (!key) return [];
+  return Array.from(new Set(rows.map((row) => valueFor(row, key)).filter((value) => !isBlank(value)).map(String))).sort((a, b) => a.localeCompare(b));
+}
+
 function rowLabel(row: any) {
   return row.name || row.invoiceNo || row.purchaseNo || row.paymentNo || row.email || "this record";
+}
+
+function entityLabel(title: string, createLabel: string) {
+  const cleanCreate = createLabel.replace(/^(add|create|new)\s+/i, "").trim();
+  if (cleanCreate) return cleanCreate.charAt(0).toUpperCase() + cleanCreate.slice(1);
+  const cleanTitle = title.replace(/\s+/g, " ").trim();
+  return cleanTitle.endsWith("s") ? cleanTitle.slice(0, -1) : cleanTitle || "Record";
 }
 
 function prettifyKey(key: string) {
@@ -241,58 +309,238 @@ export function CrudManager({
   canUpdateRowKey,
   canDeleteRowKey,
   createLabel = "Add record",
+  createAction,
   deleteLabel = "Delete",
   deleteVerb = deleteLabel,
   emptyState = "No records found.",
   submitShape,
-  canViewDetails = true
+  canViewDetails = true,
+  pagination,
+  filterConfig
 }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
+  const serverPaged = Boolean(pagination);
   const [mode, setMode] = useState<"closed" | "create" | "edit">("closed");
   const [activeRow, setActiveRow] = useState<any>(null);
   const [detailRow, setDetailRow] = useState<any>(null);
+  const [deleteRow, setDeleteRow] = useState<any>(null);
+  const [modalOrigin, setModalOrigin] = useState<ModalMotionOrigin | null>(null);
+  const [modalClosing, setModalClosing] = useState(false);
+  const closeTimer = useRef<number | null>(null);
+  const originElementRef = useRef<Element | null>(null);
   const [form, setForm] = useState<Record<string, any>>(defaultForm(fields));
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(pagination?.query ?? "");
+  const [statusFilter, setStatusFilter] = useState(pagination?.status || "all");
+  const [facetFilter, setFacetFilter] = useState(pagination?.facet || "all");
+  const [dateFrom, setDateFrom] = useState(pagination?.dateFrom ?? "");
+  const [dateTo, setDateTo] = useState(pagination?.dateTo ?? "");
+  const [page, setPage] = useState(pagination?.page ?? 1);
+  const [pageSize, setPageSize] = useState(pagination?.pageSize ?? 10);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const dialogOpen = mode !== "closed" || Boolean(detailRow) || Boolean(deleteRow);
   const activeFields = useMemo(() => fields.filter((field) => (mode === "edit" ? !field.hideOnEdit : !field.hideOnCreate)), [fields, mode]);
   const detailList = useMemo(() => detailRow ? detailItems(detailRow, fields, columns) : [], [columns, detailRow, fields]);
   const hasActionColumn = canViewDetails || canUpdate || canDelete;
+  const derivedStatusKey = useMemo(() => {
+    const columnKey = columns.find((column) => /status/i.test(column.key))?.key;
+    if (columnKey && rows.some((row) => !isBlank(valueFor(row, columnKey)))) return columnKey;
+    return rows.some((row) => !isBlank(row?.status)) ? "status" : null;
+  }, [columns, rows]);
+  const statusKey = filterConfig?.statusKey === undefined ? derivedStatusKey : filterConfig.statusKey;
+  const statusOptions = useMemo(() => filterConfig?.statusOptions?.length ? filterConfig.statusOptions : distinctValues(rows, statusKey), [filterConfig?.statusOptions, rows, statusKey]);
+  const derivedDateKey = useMemo(() => {
+    const candidates = [
+      "invoiceDate",
+      "purchaseDate",
+      "paidAt",
+      "joiningDate",
+      "lastVisitAt",
+      "createdAt",
+      "updatedAt",
+      ...columns.map((column) => column.key).filter((key) => !/display$/i.test(key))
+    ];
+    return candidates.find((key) => isDateLikeKey(key) && rows.some((row) => rowDateValue(row, key))) || null;
+  }, [columns, rows]);
+  const dateKey = filterConfig?.dateKey === undefined ? derivedDateKey : filterConfig.dateKey;
+  const dateLabel = filterConfig?.dateLabel || columns.find((column) => column.key === dateKey)?.label || (dateKey ? prettifyKey(dateKey) : "Date");
+  const derivedFacetKey = useMemo(() => {
+    const candidates = ["direction", "role", "categoryDisplay", "supplierDisplay", "customerDisplay", "type", "channel", "city", "area"];
+    return candidates.find((key) => {
+      if (key === statusKey) return false;
+      const values = distinctValues(rows, key);
+      return values.length > 1 && values.length <= 12;
+    }) || null;
+  }, [rows, statusKey]);
+  const facetKey = filterConfig?.facetKey === undefined ? derivedFacetKey : filterConfig.facetKey;
+  const facetLabel = filterConfig?.facetLabel || columns.find((column) => column.key === facetKey)?.label || (facetKey ? prettifyKey(facetKey) : "Filter");
+  const facetOptions = useMemo(() => filterConfig?.facetOptions?.length ? filterConfig.facetOptions : distinctValues(rows, facetKey), [facetKey, filterConfig?.facetOptions, rows]);
   const detailCanUpdate = Boolean(
     detailRow &&
     canUpdate &&
     (canUpdateRow ? canUpdateRow(detailRow) : canUpdateRowKey ? Boolean(detailRow[canUpdateRowKey]) : true)
   );
   const filteredRows = useMemo(() => {
+    if (serverPaged) return rows;
     const normalized = query.trim().toLowerCase();
-    if (!normalized) return rows;
-    return rows.filter((row) =>
-      columns.some((column) => String(valueFor(row, column.key)).toLowerCase().includes(normalized))
-    );
-  }, [columns, query, rows]);
+    const from = startOfLocalDay(dateFrom);
+    const to = endOfLocalDay(dateTo);
 
-  function openCreate() {
+    return rows.filter((row) => {
+      const matchesQuery = !normalized || columns.some((column) => String(valueFor(row, column.key)).toLowerCase().includes(normalized));
+      const matchesStatus = statusFilter === "all" || String(valueFor(row, statusKey || "")) === statusFilter;
+      const matchesFacet = facetFilter === "all" || String(valueFor(row, facetKey || "")) === facetFilter;
+      const rowDate = rowDateValue(row, dateKey);
+      const matchesFrom = !from || Boolean(rowDate && rowDate >= from);
+      const matchesTo = !to || Boolean(rowDate && rowDate <= to);
+
+      return matchesQuery && matchesStatus && matchesFacet && matchesFrom && matchesTo;
+    });
+  }, [columns, dateFrom, dateKey, dateTo, facetFilter, facetKey, query, rows, serverPaged, statusFilter, statusKey]);
+  const hasActiveFilters = Boolean(query.trim() || statusFilter !== "all" || facetFilter !== "all" || dateFrom || dateTo);
+  const currentPage = serverPaged ? pagination?.page || 1 : page;
+  const currentPageSize = serverPaged ? pagination?.pageSize || pageSize : pageSize;
+  const totalRecords = serverPaged ? pagination?.total || 0 : filteredRows.length;
+  const totalPages = currentPageSize === 0 ? 1 : Math.max(1, Math.ceil(totalRecords / currentPageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStart = currentPageSize === 0 ? 0 : (safePage - 1) * currentPageSize;
+  const pageRows = serverPaged ? rows : currentPageSize === 0 ? filteredRows : filteredRows.slice(pageStart, pageStart + currentPageSize);
+  const visibleStart = totalRecords ? pageStart + 1 : 0;
+  const visibleEnd = serverPaged ? Math.min(pageStart + rows.length, totalRecords) : currentPageSize === 0 ? totalRecords : Math.min(pageStart + currentPageSize, totalRecords);
+  const updateServerParams = useCallback((updates: Record<string, string | number | null | undefined>) => {
+    if (!serverPaged) return;
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(updates)) {
+      const normalized = value === null || value === undefined ? "" : String(value);
+      if (!normalized || normalized === "all") {
+        params.delete(key);
+      } else {
+        params.set(key, normalized);
+      }
+    }
+    const next = params.toString();
+    startTransition(() => {
+      router.push(next ? `${pathname}?${next}` : pathname, { scroll: false });
+    });
+  }, [pathname, router, searchParams, serverPaged, startTransition]);
+
+  useEffect(() => {
+    if (!serverPaged) return;
+    setQuery(pagination?.query ?? "");
+    setStatusFilter(pagination?.status || "all");
+    setFacetFilter(pagination?.facet || "all");
+    setDateFrom(pagination?.dateFrom ?? "");
+    setDateTo(pagination?.dateTo ?? "");
+    setPage(pagination?.page ?? 1);
+    setPageSize(pagination?.pageSize ?? 10);
+  }, [pagination?.dateFrom, pagination?.dateTo, pagination?.facet, pagination?.page, pagination?.pageSize, pagination?.query, pagination?.status, serverPaged]);
+
+  useEffect(() => {
+    if (!serverPaged) return;
+    const handle = window.setTimeout(() => {
+      const currentQuery = searchParams.get("q") || "";
+      if (query.trim() !== currentQuery) updateServerParams({ q: query.trim(), page: "1" });
+    }, 360);
+    return () => window.clearTimeout(handle);
+  }, [query, searchParams, serverPaged, updateServerParams]);
+
+  useEffect(() => {
+    if (serverPaged) return;
+    setPage(1);
+  }, [dateFrom, dateTo, facetFilter, pageSize, query, serverPaged, statusFilter]);
+
+  useEffect(() => {
+    if (serverPaged) return;
+    if (page > totalPages) setPage(totalPages);
+  }, [page, serverPaged, totalPages]);
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, [dialogOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    };
+  }, []);
+
+  function modalOriginFromEvent(event?: MouseEvent<HTMLElement>) {
+    originElementRef.current = event?.currentTarget || null;
+    return captureModalOrigin(event?.currentTarget);
+  }
+
+  function liveModalOrigin() {
+    const element = originElementRef.current;
+    if (!element?.isConnected) return null;
+    const rect = element.getBoundingClientRect();
+    const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+    return visible ? captureModalOrigin(element) : null;
+  }
+
+  function clearCloseTimer() {
+    if (!closeTimer.current) return;
+    window.clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  }
+
+  function finishDialogClose({ clearMessage = false } = {}) {
+    clearCloseTimer();
+    setModalOrigin(liveModalOrigin());
+    setModalClosing(true);
+    closeTimer.current = window.setTimeout(() => {
+      setMode("closed");
+      setActiveRow(null);
+      setDetailRow(null);
+      setDeleteRow(null);
+      setFieldErrors({});
+      if (clearMessage) setMessage(null);
+      setModalClosing(false);
+      closeTimer.current = null;
+    }, MODAL_EXIT_MS);
+  }
+
+  function openCreate(event?: MouseEvent<HTMLElement>) {
+    clearCloseTimer();
+    setModalOrigin(modalOriginFromEvent(event));
+    setModalClosing(false);
     setActiveRow(null);
     setDetailRow(null);
+    setDeleteRow(null);
     setForm(defaultForm(fields));
     setMessage(null);
     setFieldErrors({});
     setMode("create");
   }
 
-  function openEdit(row: any) {
+  function openEdit(row: any, event?: MouseEvent<HTMLElement>) {
+    clearCloseTimer();
+    if (event) setModalOrigin(modalOriginFromEvent(event));
+    setModalClosing(false);
     setActiveRow(row);
     setDetailRow(null);
+    setDeleteRow(null);
     setForm(defaultForm(fields, row));
     setMessage(null);
     setFieldErrors({});
     setMode("edit");
   }
 
-  function openDetails(row: any) {
+  function openDetails(row: any, event?: MouseEvent<HTMLElement>) {
+    clearCloseTimer();
+    setModalOrigin(modalOriginFromEvent(event));
+    setModalClosing(false);
     setActiveRow(row);
     setDetailRow(row);
+    setDeleteRow(null);
     setMessage(null);
     setMode("closed");
   }
@@ -300,6 +548,11 @@ export function CrudManager({
   function closeForm() {
     setMode("closed");
     setFieldErrors({});
+  }
+
+  function closeDialog() {
+    if (loading) return;
+    finishDialogClose({ clearMessage: true });
   }
 
   function updateField(key: string, value: unknown) {
@@ -319,6 +572,7 @@ export function CrudManager({
     if (Object.keys(validationErrors).length) {
       setFieldErrors(validationErrors);
       setMessage("Please fix the highlighted fields before saving.");
+      toast.warning("Please fix the highlighted fields before saving.");
       const firstKey = Object.keys(validationErrors)[0];
       window.setTimeout(() => (document.getElementsByName(firstKey)[0] as HTMLElement | undefined)?.focus(), 0);
       return;
@@ -363,29 +617,56 @@ export function CrudManager({
         const firstIssue = Object.values(nextFieldErrors).find(Boolean);
         throw new Error(firstIssue || data.error || "Request failed.");
       }
-      setMode("closed");
-      setDetailRow(null);
+      toast.success(`${entityLabel(title, createLabel)} ${mode === "edit" ? "updated" : "created"} successfully.`);
+      finishDialogClose({ clearMessage: true });
       router.refresh();
     } catch (error: any) {
-      setMessage(error?.message || "Something went wrong.");
+      const errorMessage = error?.message || "Something went wrong.";
+      setMessage(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
   }
 
-  async function remove(row: any) {
-    if (!window.confirm(`${deleteVerb} ${rowLabel(row)}?`)) return;
+  function requestDelete(row: any, event?: MouseEvent<HTMLElement>) {
+    clearCloseTimer();
+    setModalOrigin(modalOriginFromEvent(event));
+    setModalClosing(false);
+    setMode("closed");
+    setDetailRow(null);
+    setDeleteRow(row);
+    setMessage(null);
+  }
+
+  async function confirmDelete(row: any) {
     setLoading(true);
     setMessage(null);
     try {
       const response = await fetch(`${endpoint}/${row.id}`, { method: "DELETE", cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Request failed.");
+      toast.success(`${rowLabel(row)} ${deleteVerb.toLowerCase()} successfully.`);
+      finishDialogClose({ clearMessage: true });
       router.refresh();
     } catch (error: any) {
-      setMessage(error?.message || "Delete failed.");
+      const errorMessage = error?.message || "Delete failed.";
+      setMessage(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
+    }
+  }
+
+  function resetFilters() {
+    setQuery("");
+    setStatusFilter("all");
+    setFacetFilter("all");
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+    if (serverPaged) {
+      updateServerParams({ q: null, status: null, facet: null, dateFrom: null, dateTo: null, page: "1" });
     }
   }
 
@@ -395,22 +676,20 @@ export function CrudManager({
         <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">{rows.length.toLocaleString()} records</Badge>
+              <Badge variant="secondary">{totalRecords.toLocaleString()} records</Badge>
               {canCreate || canUpdate || canDelete ? <Badge variant="success">Role enabled</Badge> : <Badge variant="outline">Read only</Badge>}
             </div>
             <CardTitle className="text-xl tracking-normal">{title}</CardTitle>
             {description ? <CardDescription className="max-w-3xl">{description}</CardDescription> : null}
           </div>
           <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto">
-            <div className="relative min-w-0 flex-1 xl:w-80">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} className="h-10 pl-10" placeholder={`Search ${title.toLowerCase()}...`} />
-            </div>
             {canCreate ? (
-              <Button onClick={openCreate} className="shrink-0">
-                <Plus className="size-4" />
-                {createLabel}
-              </Button>
+              createAction ?? (
+                <Button onClick={(event) => openCreate(event)} className="shrink-0">
+                  <Plus className="size-4" />
+                  {createLabel}
+                </Button>
+              )
             ) : canUpdate || canDelete ? (
               <Badge variant="secondary" className="min-h-10 px-4">Existing records only</Badge>
             ) : (
@@ -422,128 +701,286 @@ export function CrudManager({
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {message ? <div className="status-message mx-4 mt-4 border-destructive/20 bg-destructive/10 text-destructive sm:mx-5">{message}</div> : null}
-        {mode !== "closed" ? (
-          <form onSubmit={submit} className="crud-form-panel" noValidate>
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <p className="font-medium">{mode === "edit" ? `Update ${rowLabel(activeRow)}` : createLabel}</p>
-                <p className="text-xs leading-5 text-muted-foreground">Saved through role-aware API routes with validation and exception handling.</p>
-              </div>
-              <Button type="button" variant="outline" size="icon" onClick={closeForm} title="Close form">
-                <X className="size-4" />
+        <div className="crud-table-toolbar">
+          <div className="crud-search-box">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(event) => setQuery(event.target.value)} className="h-10 pl-10" placeholder={`Search by name, number, status or ${title.toLowerCase()}...`} />
+          </div>
+          <div className="crud-filter-row" aria-label={`${title} filters`}>
+            {statusOptions.length > 1 ? (
+              <label className="crud-filter-control">
+                <span>Status</span>
+                <select
+                  className="form-select"
+                  value={statusFilter}
+                  onChange={(event) => {
+                    setStatusFilter(event.target.value);
+                    if (serverPaged) updateServerParams({ status: event.target.value, page: "1" });
+                  }}
+                >
+                  <option value="all">All statuses</option>
+                  {statusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+            ) : null}
+            {facetKey && facetOptions.length > 1 ? (
+              <label className="crud-filter-control">
+                <span>{facetLabel}</span>
+                <select
+                  className="form-select"
+                  value={facetFilter}
+                  onChange={(event) => {
+                    setFacetFilter(event.target.value);
+                    if (serverPaged) updateServerParams({ facet: event.target.value, page: "1" });
+                  }}
+                >
+                  <option value="all">All {facetLabel.toLowerCase()}</option>
+                  {facetOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+            ) : null}
+            {dateKey ? (
+              <>
+                <label className="crud-filter-control">
+                  <span>{dateLabel} from</span>
+                  <Input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(event) => {
+                      setDateFrom(event.target.value);
+                      if (serverPaged) updateServerParams({ dateFrom: event.target.value, page: "1" });
+                    }}
+                  />
+                </label>
+                <label className="crud-filter-control">
+                  <span>{dateLabel} to</span>
+                  <Input
+                    type="date"
+                    value={dateTo}
+                    onChange={(event) => {
+                      setDateTo(event.target.value);
+                      if (serverPaged) updateServerParams({ dateTo: event.target.value, page: "1" });
+                    }}
+                  />
+                </label>
+              </>
+            ) : null}
+            <label className="crud-filter-control crud-limit-control">
+              <span>Rows</span>
+              <select
+                className="form-select"
+                value={String(currentPageSize)}
+                onChange={(event) => {
+                  const nextSize = Number(event.target.value);
+                  setPageSize(nextSize);
+                  if (serverPaged) updateServerParams({ pageSize: nextSize, page: "1" });
+                }}
+              >
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                {!serverPaged ? <option value="0">All</option> : null}
+              </select>
+            </label>
+            {hasActiveFilters ? (
+              <Button type="button" variant="outline" size="sm" onClick={resetFilters} className="crud-reset-filter">
+                <Filter className="size-3.5" />
+                Reset
               </Button>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {activeFields.map((field) => {
-                const error = fieldErrors[field.key];
-                const min = field.min ?? (isNonNegativeNumberField(field) ? 0 : undefined);
+            ) : null}
+          </div>
+        </div>
+        {message && !dialogOpen ? <div className="status-message mx-4 mt-4 border-destructive/20 bg-destructive/10 text-destructive sm:mx-5">{message}</div> : null}
+        {dialogOpen ? (
+          <ModalPortal>
+          <div className="crud-modal-layer" data-state={modalClosing ? "closing" : "open"} role="presentation" onKeyDown={(event) => event.key === "Escape" && closeDialog()}>
+            <button type="button" className="crud-modal-backdrop" data-state={modalClosing ? "closing" : "open"} aria-label="Close dialog" onClick={closeDialog} />
+            <div
+              className={cn("crud-modal motion-modal", mode === "closed" && detailRow && "crud-modal-details", deleteRow && "crud-modal-confirm")}
+              data-state={modalClosing ? "closing" : "open"}
+              style={modalMotionStyle(modalOrigin)}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="crud-modal-title"
+            >
+              {mode !== "closed" ? (
+                <form onSubmit={submit} noValidate>
+                  <div className="crud-modal-heading">
+                    <div className="min-w-0">
+                      <p id="crud-modal-title" className="truncate text-lg font-semibold tracking-normal">{mode === "edit" ? `Update ${rowLabel(activeRow)}` : createLabel}</p>
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">Only the fields needed for this action are shown here.</p>
+                    </div>
+                    <Button type="button" variant="outline" size="icon" onClick={closeDialog} title="Close form">
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                  {message ? <div role="alert" className="status-message mx-5 mt-4 border-destructive/20 bg-destructive/10 text-destructive">{message}</div> : null}
+                  <div className="crud-modal-body">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {activeFields.map((field) => {
+                        const error = fieldErrors[field.key];
+                        const min = field.min ?? (isNonNegativeNumberField(field) ? 0 : undefined);
 
-                return (
-                  <label
-                    key={field.key}
-                    data-invalid={Boolean(error) || undefined}
-                    className={cn("crud-field", field.span === "full" && "sm:col-span-2 xl:col-span-4", field.span === "half" && "xl:col-span-2")}
-                  >
-                    <span className="crud-field-label">
-                      {field.label}
-                      {field.required ? <i aria-hidden="true">*</i> : null}
-                    </span>
-                    {field.type === "textarea" ? (
-                      <Textarea
-                        name={field.key}
-                        value={form[field.key] ?? ""}
-                        onChange={(event) => updateField(field.key, event.target.value)}
-                        placeholder={field.placeholder}
-                        aria-invalid={Boolean(error)}
-                        aria-describedby={error ? `${field.key}-error` : undefined}
-                        autoComplete={autoCompleteFor(field)}
-                      />
-                    ) : field.type === "select" ? (
-                      <select
-                        name={field.key}
-                        value={form[field.key] ?? ""}
-                        onChange={(event) => updateField(field.key, event.target.value)}
-                        aria-invalid={Boolean(error)}
-                        aria-describedby={error ? `${field.key}-error` : undefined}
-                        className="form-select"
-                      >
-                        <option value="">Select {field.label}</option>
-                        {field.options?.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <Input
-                        name={field.key}
-                        type={field.type || "text"}
-                        value={form[field.key] ?? ""}
-                        onChange={(event) => updateField(field.key, event.target.value)}
-                        placeholder={field.placeholder}
-                        aria-invalid={Boolean(error)}
-                        aria-describedby={error ? `${field.key}-error` : undefined}
-                        min={min}
-                        max={field.max}
-                        step={field.step ?? (field.type === "number" ? "any" : undefined)}
-                        inputMode={inputModeFor(field)}
-                        autoComplete={autoCompleteFor(field)}
-                      />
-                    )}
-                    {error ? <span id={`${field.key}-error`} className="crud-field-error">{error}</span> : null}
-                  </label>
-                );
-              })}
+                        return (
+                          <label
+                            key={field.key}
+                            data-invalid={Boolean(error) || undefined}
+                            className={cn("crud-field", field.span === "full" && "sm:col-span-2 xl:col-span-3", field.span === "half" && "xl:col-span-2")}
+                          >
+                            <span className="crud-field-label">
+                              {field.label}
+                              {field.required ? <i aria-hidden="true">*</i> : null}
+                            </span>
+                            {field.type === "textarea" ? (
+                              <Textarea
+                                name={field.key}
+                                value={form[field.key] ?? ""}
+                                onChange={(event) => updateField(field.key, event.target.value)}
+                                placeholder={field.placeholder}
+                                aria-invalid={Boolean(error)}
+                                aria-describedby={error ? `${field.key}-error` : undefined}
+                                autoComplete={autoCompleteFor(field)}
+                              />
+                            ) : field.type === "select" ? (
+                              <select
+                                name={field.key}
+                                value={form[field.key] ?? ""}
+                                onChange={(event) => updateField(field.key, event.target.value)}
+                                aria-invalid={Boolean(error)}
+                                aria-describedby={error ? `${field.key}-error` : undefined}
+                                className="form-select"
+                              >
+                                <option value="">Select {field.label}</option>
+                                {field.options?.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <Input
+                                name={field.key}
+                                type={field.type || "text"}
+                                value={form[field.key] ?? ""}
+                                onChange={(event) => updateField(field.key, event.target.value)}
+                                placeholder={field.placeholder}
+                                aria-invalid={Boolean(error)}
+                                aria-describedby={error ? `${field.key}-error` : undefined}
+                                min={min}
+                                max={field.max}
+                                step={field.step ?? (field.type === "number" ? "any" : undefined)}
+                                inputMode={inputModeFor(field)}
+                                autoComplete={autoCompleteFor(field)}
+                              />
+                            )}
+                            {error ? <span id={`${field.key}-error`} className="crud-field-error">{error}</span> : null}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="crud-modal-footer">
+                    <Button disabled={loading} className="w-full sm:w-auto">
+                      {loading ? "Saving..." : mode === "edit" ? "Save changes" : "Create"}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={closeDialog} className="w-full sm:w-auto">
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              ) : null}
+
+              {detailRow && mode === "closed" ? (
+                <section aria-live="polite">
+                  <div className="crud-modal-heading">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="crud-detail-icon">
+                        <Info className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p id="crud-modal-title" className="truncate text-lg font-semibold tracking-normal">Details for {rowLabel(detailRow)}</p>
+                        <p className="mt-1 text-sm leading-6 text-muted-foreground">Review the full record without entering edit mode.</p>
+                      </div>
+                    </div>
+                    <div className="ml-auto flex shrink-0 gap-2">
+                      {detailCanUpdate ? (
+                        <Button type="button" size="sm" variant="outline" onClick={(event) => openEdit(detailRow, event)} disabled={loading}>
+                          <Edit3 className="size-3.5" />
+                          Edit
+                        </Button>
+                      ) : null}
+                      <Button type="button" size="icon" variant="outline" onClick={closeDialog} title="Close details">
+                        <X className="size-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="crud-modal-body">
+                    <div className="crud-detail-grid">
+                      {detailList.map((item) => (
+                        <div key={item.key} className="crud-detail-item">
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              ) : null}
+
+              {deleteRow && mode === "closed" ? (
+                <section aria-live="polite">
+                  <div className="crud-modal-heading">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="crud-detail-icon bg-destructive/12 text-destructive">
+                        <Trash2 className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p id="crud-modal-title" className="truncate text-lg font-semibold tracking-normal">{deleteVerb} {rowLabel(deleteRow)}?</p>
+                        <p className="mt-1 text-sm leading-6 text-muted-foreground">This action is protected and will update the record according to your role permissions.</p>
+                      </div>
+                    </div>
+                    <Button type="button" size="icon" variant="outline" onClick={closeDialog} title="Close confirmation" disabled={loading}>
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                  {message ? <div role="alert" className="status-message mx-5 mt-4 border-destructive/20 bg-destructive/10 text-destructive">{message}</div> : null}
+                  <div className="crud-modal-body">
+                    <div className="crud-delete-panel">
+                      <p className="text-sm leading-6 text-muted-foreground">Confirm that you want to {deleteVerb.toLowerCase()} this record. You can cancel and return exactly where you started.</p>
+                      <div className="mt-4 rounded-2xl border border-border/70 bg-muted/20 p-4">
+                        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Selected record</span>
+                        <strong className="mt-1 block truncate text-base">{rowLabel(deleteRow)}</strong>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="crud-modal-footer">
+                    <Button type="button" variant="destructive" onClick={() => confirmDelete(deleteRow)} disabled={loading}>
+                      {loading ? `${deleteVerb}...` : deleteVerb}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={closeDialog} disabled={loading}>
+                      Cancel
+                    </Button>
+                  </div>
+                </section>
+              ) : null}
             </div>
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <Button disabled={loading} className="w-full sm:w-auto">
-                {loading ? "Saving..." : mode === "edit" ? "Save changes" : "Create"}
-              </Button>
-              <Button type="button" variant="outline" onClick={closeForm} className="w-full sm:w-auto">
-                Cancel
-              </Button>
-            </div>
-          </form>
+          </div>
+          </ModalPortal>
         ) : null}
-        {detailRow ? (
-          <section className="crud-detail-panel" aria-live="polite">
-            <div className="crud-detail-heading">
-              <span className="crud-detail-icon">
-                <Info className="size-4" />
-              </span>
-              <div className="min-w-0">
-                <p className="truncate font-medium">Details for {rowLabel(detailRow)}</p>
-                <p className="text-xs leading-5 text-muted-foreground">Review the full record without entering edit mode.</p>
-              </div>
-              <div className="ml-auto flex shrink-0 gap-2">
-                {detailCanUpdate ? (
-                  <Button type="button" size="sm" variant="outline" onClick={() => openEdit(detailRow)} disabled={loading}>
-                    <Edit3 className="size-3.5" />
-                    Edit
-                  </Button>
-                ) : null}
-                <Button type="button" size="icon" variant="outline" onClick={() => setDetailRow(null)} title="Close details">
-                  <X className="size-4" />
-                </Button>
-              </div>
+        <div className={cn("crud-table-scroll relative overflow-x-auto", isPending && "is-loading")}>
+          {isPending ? (
+            <div className="crud-table-pending" aria-live="polite" aria-label="Loading records">
+              <span />
+              <span />
+              <span />
             </div>
-            <div className="crud-detail-grid">
-              {detailList.map((item) => (
-                <div key={item.key} className="crud-detail-item">
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
-                </div>
-              ))}
-            </div>
-          </section>
-        ) : null}
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+          ) : null}
+          <table className="crud-table w-full min-w-[760px] text-sm">
             <thead>
               <tr>
                 {columns.map((column) => (
-                  <th key={column.key} className={cn("px-5 py-4 text-left", column.className)}>
+                  <th key={column.key} className={cn("px-5 py-4 text-left", isNumericColumn(column.key) && "text-right", column.className)}>
                     {column.label}
                   </th>
                 ))}
@@ -551,8 +988,8 @@ export function CrudManager({
               </tr>
             </thead>
             <tbody>
-              {filteredRows.length ? (
-                filteredRows.map((row) => {
+              {pageRows.length ? (
+                pageRows.map((row) => {
                   const rowUpdateAllowed = canUpdateRow ? canUpdateRow(row) : canUpdateRowKey ? Boolean(row[canUpdateRowKey]) : true;
                   const rowDeleteAllowed = canDeleteRow ? canDeleteRow(row) : canDeleteRowKey ? Boolean(row[canDeleteRowKey]) : true;
                   const rowCanUpdate = Boolean(canUpdate && rowUpdateAllowed);
@@ -561,27 +998,27 @@ export function CrudManager({
                   return (
                     <tr key={row.id} className="border-t border-border/60 align-top">
                       {columns.map((column) => (
-                        <td key={column.key} className={cn("px-5 py-4", column.className)}>
+                        <td key={column.key} data-label={column.label} className={cn("px-5 py-4", isNumericColumn(column.key) && "text-right tabular-nums", column.className)}>
                           {cellContent(column, row)}
                         </td>
                       ))}
                       {hasActionColumn ? (
-                        <td className="px-5 py-4">
+                        <td data-label="Actions" className="px-5 py-4">
                           <div className="flex flex-wrap justify-end gap-2">
                             {canViewDetails ? (
-                              <Button size="sm" variant="secondary" onClick={() => openDetails(row)} disabled={loading}>
+                              <Button size="sm" variant="secondary" onClick={(event) => openDetails(row, event)} disabled={loading}>
                                 <Eye className="size-3.5" />
                                 Details
                               </Button>
                             ) : null}
                             {rowCanUpdate ? (
-                              <Button size="sm" variant="outline" onClick={() => openEdit(row)} disabled={loading}>
+                              <Button size="sm" variant="outline" onClick={(event) => openEdit(row, event)} disabled={loading}>
                                 <Edit3 className="size-3.5" />
                                 Edit
                               </Button>
                             ) : null}
                             {rowCanDelete ? (
-                              <Button size="sm" variant="destructive" onClick={() => remove(row)} disabled={loading}>
+                              <Button size="sm" variant="destructive" onClick={(event) => requestDelete(row, event)} disabled={loading}>
                                 <Trash2 className="size-3.5" />
                                 {deleteLabel}
                               </Button>
@@ -596,12 +1033,47 @@ export function CrudManager({
               ) : (
                 <tr>
                   <td colSpan={columns.length + (hasActionColumn ? 1 : 0)} className="px-4 py-12">
-                    <div className="empty-state">{query ? "No matching records found." : emptyState}</div>
+                    <div className="empty-state">{hasActiveFilters ? "No records match the current filters." : emptyState}</div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+        <div className="crud-table-footer">
+          <p>
+            Showing <strong>{visibleStart.toLocaleString()}-{visibleEnd.toLocaleString()}</strong> of <strong>{totalRecords.toLocaleString()}</strong>
+            {!serverPaged && filteredRows.length !== rows.length ? <span> filtered from {rows.length.toLocaleString()}</span> : null}
+          </p>
+          <div className="crud-pagination">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (serverPaged) updateServerParams({ page: Math.max(1, safePage - 1) });
+                else setPage((current) => Math.max(1, current - 1));
+              }}
+              disabled={safePage <= 1 || currentPageSize === 0 || isPending}
+            >
+              <ChevronLeft className="size-3.5" />
+              Previous
+            </Button>
+            <span>Page {safePage.toLocaleString()} of {totalPages.toLocaleString()}</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (serverPaged) updateServerParams({ page: Math.min(totalPages, safePage + 1) });
+                else setPage((current) => Math.min(totalPages, current + 1));
+              }}
+              disabled={safePage >= totalPages || currentPageSize === 0 || isPending}
+            >
+              Next
+              <ChevronRight className="size-3.5" />
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

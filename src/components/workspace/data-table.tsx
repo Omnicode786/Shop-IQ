@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function DataTable({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <Card className="overflow-hidden">
+    <Card className="data-table-card overflow-hidden">
       <CardHeader className="border-b border-border/60 pb-4">
         <div className="flex min-w-0 items-start justify-between gap-4">
           <div className="min-w-0">

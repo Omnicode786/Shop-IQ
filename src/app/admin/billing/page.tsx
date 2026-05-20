@@ -1,29 +1,44 @@
 import { ReceiptText } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
-import { DonutBreakdownCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
+import { BillingFlow } from "@/components/workspace/billing-flow";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { buildDailySeries, statusSegments } from "@/lib/chart-helpers";
 import { prisma } from "@/lib/prisma";
+import { contains, dateRange, paginationMeta, readTableState, type TableSearchParams } from "@/lib/table-pagination";
 import { formatDate, toPlain } from "@/lib/utils";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
 function money(value: any) {
   return `PKR ${Number(value || 0).toLocaleString()}`;
 }
 
-function compactMoney(value: number) {
-  return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
-}
-
-export default async function Billing() {
+export default async function Billing({ searchParams }: { searchParams?: TableSearchParams }) {
   const user = await getCurrentUser();
-  const [invoicesRaw, customersRaw, productsRaw] = await Promise.all([
-    prisma.invoice.findMany({ where: { shopId: user!.shopId }, include: { customer: true, items: { include: { product: true } } }, orderBy: { invoiceDate: "desc" }, take: 150 }),
+  const table = readTableState(searchParams);
+  const invoiceFilters: any[] = [];
+  if (table.query) {
+    invoiceFilters.push({
+      OR: [
+        { invoiceNo: contains(table.query) },
+        { receiptNo: contains(table.query) },
+        { channel: contains(table.query) },
+        { promoCode: contains(table.query) },
+        { notes: contains(table.query) },
+        { customer: { is: { name: contains(table.query) } } }
+      ]
+    });
+  }
+  if (table.status) invoiceFilters.push({ status: table.status });
+  if (table.facet) invoiceFilters.push({ channel: table.facet });
+  const invoiceDateRange = dateRange("invoiceDate", table.dateFrom, table.dateTo);
+  if (invoiceDateRange) invoiceFilters.push(invoiceDateRange);
+  const invoiceWhere = { shopId: user!.shopId, ...(invoiceFilters.length ? { AND: invoiceFilters } : {}) };
+  const [invoicesRaw, invoicesTotal, invoiceMetrics, customersRaw, productsRaw] = await Promise.all([
+    prisma.invoice.findMany({ where: invoiceWhere, include: { customer: true, _count: { select: { items: true } } }, orderBy: { invoiceDate: "desc" }, skip: table.skip, take: table.take }),
+    prisma.invoice.count({ where: invoiceWhere }),
+    prisma.invoice.aggregate({ where: { shopId: user!.shopId }, _sum: { total: true, dueAmount: true }, _count: true }),
     prisma.customer.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } }),
     prisma.product.findMany({ where: { shopId: user!.shopId, status: "ACTIVE" }, orderBy: { name: "asc" } })
   ]);
@@ -35,18 +50,22 @@ export default async function Billing() {
     invoiceDateDisplay: formatDate(invoice.invoiceDate),
     totalDisplay: money(invoice.total),
     dueDisplay: money(invoice.dueAmount),
-    itemCount: invoice.items.length
+    itemCount: invoice._count?.items || 0
   }));
   const customers = toPlain(customersRaw);
   const products = toPlain(productsRaw);
-  const total = invoices.reduce((sum: number, invoice: any) => sum + Number(invoice.total), 0);
-  const due = invoices.reduce((sum: number, invoice: any) => sum + Number(invoice.dueAmount || 0), 0);
-  const invoiceTrend = buildDailySeries(invoices, (invoice: any) => invoice.invoiceDate, (invoice: any) => Number(invoice.total), 14);
-  const statusRows = statusSegments(invoices, (invoice: any) => invoice.status);
+  const total = Number(invoiceMetrics._sum.total || 0);
+  const due = Number(invoiceMetrics._sum.dueAmount || 0);
+  const invoiceCount = invoiceMetrics._count;
+  const canCreateInvoice = can(user?.role, "invoices", "create");
 
   return (
-    <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "billing")} user={user}>
-      <SectionHeader eyebrow="Billing" title="Invoice and sales workspace" description="Create sales invoices, settle payment states and cancel records with stock reversal when authorized." />
+    <>
+      <SectionHeader
+        eyebrow="Billing"
+        title="Invoice and sales workspace"
+        description="Create sales invoices, attach customers, settle payment states and cancel records with stock reversal when authorized."
+      />
       <div className="module-command-grid">
         <ModuleHero
           eyebrow="Billing"
@@ -55,7 +74,7 @@ export default async function Billing() {
           icon={ReceiptText}
           badge="Sales desk"
           stats={[
-            { label: "Invoices", value: invoices.length },
+            { label: "Invoices", value: invoiceCount },
             { label: "Gross billed", value: money(total) },
             { label: "Sellable SKUs", value: products.length }
           ]}
@@ -66,34 +85,15 @@ export default async function Billing() {
           icon={ReceiptText}
           insights={[
             { label: "Customers", value: customers.length },
-            { label: "Invoice rows", value: invoices.length },
-            { label: "Open due", value: money(invoices.reduce((sum: number, invoice: any) => sum + Number(invoice.dueAmount || 0), 0)) }
+            { label: "Invoice rows", value: invoiceCount },
+            { label: "Open due", value: money(due) }
           ]}
         />
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-3">
-        <MetricCard icon={ReceiptText} title="Invoices" value={invoices.length} />
+        <MetricCard icon={ReceiptText} title="Invoices" value={invoiceCount} />
         <MetricCard icon={ReceiptText} title="Gross billed" value={money(total)} tone="emerald" />
         <MetricCard icon={ReceiptText} title="Open due" value={money(due)} tone="amber" />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <TrendAreaCard
-          title="Billing rhythm"
-          description="Gross invoice value across the latest sales window."
-          value={compactMoney(total)}
-          caption={`${invoices.length} recent invoices`}
-          data={invoiceTrend}
-          badge="Sales"
-          format="money"
-        />
-        <DonutBreakdownCard
-          title="Invoice status orbit"
-          description="A settlement mix that makes unpaid and partial invoices visible."
-          data={statusRows}
-          centerValue={`${invoices.length}`}
-          centerLabel="Invoices"
-          badge="Status"
-        />
       </div>
       <div className="mt-6">
         <CrudManager
@@ -101,6 +101,16 @@ export default async function Billing() {
           description="Create invoices from one product line, then update payment/status details. Cancelling an invoice reverses stock and open dues."
           endpoint="/api/invoices"
           rows={invoices}
+          pagination={paginationMeta(table, invoicesTotal)}
+          filterConfig={{
+            statusKey: "status",
+            statusOptions: ["DRAFT", "PAID", "PARTIAL", "UNPAID", "CANCELLED"],
+            facetKey: "channelDisplay",
+            facetLabel: "Channel",
+            facetOptions: ["POS", "LOYALTY", "B2B"],
+            dateKey: "invoiceDate",
+            dateLabel: "Invoice date"
+          }}
           submitShape="invoice"
           fields={[
             { key: "invoiceNo", label: "Invoice number" },
@@ -131,7 +141,8 @@ export default async function Billing() {
             { key: "dueDisplay", label: "Due" },
             { key: "status", label: "Status" }
           ]}
-          canCreate={can(user?.role, "invoices", "create")}
+          canCreate={canCreateInvoice}
+          createAction={<BillingFlow customers={customers} products={products} canCreate={canCreateInvoice} />}
           canUpdate={can(user?.role, "invoices", "update")}
           canDelete={can(user?.role, "invoices", "delete")}
           createLabel="Create invoice"
@@ -139,6 +150,6 @@ export default async function Billing() {
           deleteVerb="Cancel"
         />
       </div>
-    </AppShell>
+    </>
   );
 }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/lib/toast";
 
 type NavItem = { href: string; label: string };
 
@@ -61,13 +62,18 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
   const [collapsed, setCollapsed] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const router = useRouter();
-  const current = activeItem(nav, currentPath);
+  const pathname = usePathname();
+  const activePath = currentPath || pathname;
+  const current = activeItem(nav, activePath);
   const CurrentIcon = iconFor(current);
 
   async function logout() {
     setLoggingOut(true);
     try {
-      await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin", cache: "no-store" });
+      const response = await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) toast.warning("Logout request had a problem, returning to login.");
+    } catch {
+      toast.warning("Logout request had a problem, returning to login.");
     } finally {
       router.replace("/login");
       router.refresh();
@@ -75,43 +81,45 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
   }
 
   return (
-    <aside className={cn("app-sidebar shopiq-sidebar sticky top-0 hidden h-screen shrink-0 p-4 transition-[width] duration-300 lg:flex", collapsed ? "w-[112px]" : "w-[360px]")}>
-      <div className={cn("sidebar-shell nav-surface", collapsed && "is-collapsed")}>
-        <div className="sidebar-rail" aria-label="Primary workspace shortcuts">
-          <Link href="/" className="sidebar-mark" aria-label="ShopIQ home">
-            <Image src="/favicon.png" alt="ShopIQ" width={512} height={512} priority className="h-full w-full object-contain" />
-          </Link>
+    <aside className={cn("app-sidebar shopiq-sidebar sticky top-0 hidden h-dvh max-h-dvh shrink-0 overflow-hidden p-3 transition-[width] duration-300 lg:flex", collapsed ? "w-[104px]" : "w-[312px]")}>
+      <div className={cn("sidebar-shell nav-surface", collapsed ? "is-collapsed is-mini" : "is-expanded")}>
+        {collapsed ? (
+          <div className="sidebar-rail" aria-label="Collapsed workspace navigation">
+            <Link href="/" className="sidebar-mark" aria-label="ShopIQ home">
+              <Image src="/favicon.png" alt="ShopIQ" width={512} height={512} priority className="h-full w-full object-contain" />
+            </Link>
 
-          <div className="sidebar-rail-links">
-            {nav.slice(0, 8).map((item) => {
-              const active = isActive(item, currentPath);
-              const Icon = iconFor(item);
+            <div className="sidebar-rail-links">
+              {nav.map((item) => {
+                const active = isActive(item, activePath);
+                const Icon = iconFor(item);
 
-              return (
-                <Link key={item.href} href={item.href} title={item.label} className={cn("sidebar-rail-link", active && "is-active")}>
-                  <Icon className="size-5" />
-                </Link>
-              );
-            })}
+                return (
+                  <Link key={item.href} href={item.href} title={item.label} className={cn("sidebar-rail-link", active && "is-active")}>
+                    <Icon className="size-5" />
+                  </Link>
+                );
+              })}
+            </div>
+
+            <div className="sidebar-rail-bottom">
+              <Button variant="ghost" size="icon" className="sidebar-icon-button" onClick={() => setCollapsed(false)} title="Expand sidebar">
+                <PanelLeftOpen className="size-4" />
+              </Button>
+              <button type="button" onClick={logout} disabled={loggingOut} className="sidebar-logout-icon" title="Logout">
+                <LogOut className="size-5" />
+              </button>
+            </div>
           </div>
-
-          <div className="sidebar-rail-bottom">
-            <Button variant="ghost" size="icon" className="sidebar-icon-button" onClick={() => setCollapsed((value) => !value)} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-              {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-            </Button>
-            <button type="button" onClick={logout} disabled={loggingOut} className="sidebar-logout-icon" title="Logout">
-              <LogOut className="size-5" />
-            </button>
-          </div>
-        </div>
-
-        {!collapsed ? (
-          <div className="sidebar-panel">
+        ) : (
+          <div className="sidebar-panel" aria-label={heading}>
             <div className="sidebar-brand">
               <div className="sidebar-brand-logo" aria-label="ShopIQ retail operating system">
                 <Image src="/logo.png" alt="ShopIQ" width={1086} height={304} priority className="h-full w-full object-contain" />
               </div>
-              <div className="sidebar-live-dot" aria-hidden="true" />
+              <Button variant="ghost" size="icon" className="sidebar-icon-button" onClick={() => setCollapsed(true)} title="Collapse sidebar">
+                <PanelLeftClose className="size-4" />
+              </Button>
             </div>
 
             <div className="sidebar-pulse-card">
@@ -139,7 +147,7 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
 
             <nav className="sidebar-nav-list" aria-label={heading}>
               {nav.map((item) => {
-                const active = isActive(item, currentPath);
+                const active = isActive(item, activePath);
                 const Icon = iconFor(item);
 
                 return (
@@ -163,7 +171,7 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
               </button>
             </div>
           </div>
-        ) : null}
+        )}
       </div>
     </aside>
   );
@@ -171,7 +179,9 @@ export function Sidebar({ nav, heading, currentPath }: { nav: NavItem[]; heading
 
 export function MobileNav({ nav, currentPath }: { nav: NavItem[]; currentPath?: string }) {
   const [open, setOpen] = useState(false);
-  const current = activeItem(nav, currentPath);
+  const pathname = usePathname();
+  const activePath = currentPath || pathname;
+  const current = activeItem(nav, activePath);
   const CurrentIcon = iconFor(current);
   const quickItems = useMemo(() => {
     const preferred = ["dashboard", "billing", "products", "assistant"];
@@ -195,7 +205,7 @@ export function MobileNav({ nav, currentPath }: { nav: NavItem[]; currentPath?: 
 
   useEffect(() => {
     setOpen(false);
-  }, [currentPath]);
+  }, [activePath]);
 
   return (
     <>
@@ -211,7 +221,7 @@ export function MobileNav({ nav, currentPath }: { nav: NavItem[]; currentPath?: 
         </button>
         <div className="mobile-dock-quick" aria-label="Quick destinations">
           {quickItems.slice(0, 3).map((item) => {
-            const active = isActive(item, currentPath);
+            const active = isActive(item, activePath);
             const Icon = iconFor(item);
             return (
               <Link key={item.href} href={item.href} aria-label={item.label} title={item.label} className={cn("mobile-dock-link", active && "is-active")}>
@@ -252,7 +262,7 @@ export function MobileNav({ nav, currentPath }: { nav: NavItem[]; currentPath?: 
 
           <nav className="mobile-sidebar-nav" aria-label="Workspace destinations">
             {nav.map((item, index) => {
-              const active = isActive(item, currentPath);
+              const active = isActive(item, activePath);
               const Icon = iconFor(item);
 
               return (
@@ -271,7 +281,7 @@ export function MobileNav({ nav, currentPath }: { nav: NavItem[]; currentPath?: 
             <p>Quick go to</p>
             <div>
               {quickItems.map((item) => {
-                const active = isActive(item, currentPath);
+                const active = isActive(item, activePath);
                 const Icon = iconFor(item);
                 return (
                   <Link key={item.href} href={item.href} onClick={() => setOpen(false)} className={cn("mobile-sidebar-quick-link", active && "is-active")} aria-label={item.label} title={item.label}>

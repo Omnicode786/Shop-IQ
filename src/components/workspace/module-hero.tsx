@@ -13,8 +13,6 @@ type Insight = {
   value: string | number;
 };
 
-const bars = [48, 64, 52, 76, 58, 88, 68, 82, 56, 72, 61, 91];
-
 function cleanText(value: unknown) {
   if (value === null || value === undefined) return "";
   return String(value).trim();
@@ -43,31 +41,31 @@ export function ModuleHero({
 
   return (
     <Card className="module-hero overflow-hidden">
-      <CardContent className="relative p-6">
-        <div className="relative z-10 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+      <CardContent className="relative p-4 md:p-5">
+        <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="max-w-2xl">
-            <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               {cleanEyebrow ? <Badge variant="outline" className="hero-badge">{cleanEyebrow}</Badge> : null}
               {cleanBadge ? <Badge variant="secondary">{cleanBadge}</Badge> : null}
             </div>
-            <div className="flex items-start gap-4">
-              <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-white">
-                <Icon className="size-6" />
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white">
+                <Icon className="size-5" />
               </div>
               <div className="min-w-0">
-                <h2 className="text-3xl font-semibold tracking-normal text-white md:text-4xl">{title}</h2>
-                <p className="mt-3 max-w-2xl text-sm leading-7 text-white/64">{description}</p>
+                <h2 className="text-2xl font-semibold tracking-normal text-white md:text-3xl">{title}</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-white/64">{description}</p>
               </div>
             </div>
           </div>
           <div className="hero-value-panel">
-            <p className="text-xs uppercase tracking-[0.16em] text-white/54">Workspace</p>
-            <p className="mt-2 text-2xl font-semibold text-white">ShopIQ</p>
-            <p className="mt-2 text-xs text-white/58">Role-aware operations</p>
+            <p className="text-xs uppercase tracking-[0.14em] text-white/54">Workspace</p>
+            <p className="mt-1.5 text-xl font-semibold text-white">ShopIQ</p>
+            <p className="mt-1 text-xs text-white/58">Role-aware operations</p>
           </div>
         </div>
         {visibleStats.length ? (
-          <div className="relative z-10 mt-6 grid gap-3 md:grid-cols-3">
+          <div className="relative z-10 mt-4 grid gap-2.5 md:grid-cols-3">
             {visibleStats.slice(0, 3).map((stat) => (
               <div key={stat.label} className="module-stat">
                 <ArrowUpRight className="size-4" />
@@ -79,11 +77,6 @@ export function ModuleHero({
             ))}
           </div>
         ) : null}
-        <div className="module-meter relative z-10" aria-hidden="true">
-          {bars.map((height, index) => (
-            <span key={`${height}-${index}`} style={{ height: `${height}%`, animationDelay: `${index * 30}ms` }} />
-          ))}
-        </div>
       </CardContent>
     </Card>
   );
@@ -106,18 +99,18 @@ export function ModuleInsightPanel({
 
   return (
     <Card className="module-side-panel overflow-hidden">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-4">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Module signals</p>
-            <h3 className="mt-2 text-xl font-semibold tracking-normal">{title}</h3>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.13em] text-muted-foreground">Module signals</p>
+            <h3 className="mt-1.5 text-lg font-semibold tracking-normal">{title}</h3>
+            <p className="mt-1.5 text-sm leading-5 text-muted-foreground">{description}</p>
           </div>
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-            <Icon className="size-5" />
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <Icon className="size-4" />
           </div>
         </div>
-        <div className="mt-5 flex flex-col gap-3">
+        <div className="mt-4 flex flex-col gap-2.5">
           {visibleInsights.map((insight) => (
             <div key={insight.label} className="module-line">
               <span title={insight.label}>{insight.label}</span>

@@ -1,31 +1,49 @@
 import { AlertTriangle, Boxes, Package } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
-import { DonutBreakdownCard, RingScoreCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
-import { sumByGroup } from "@/lib/chart-helpers";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { contains, dateRange, paginationMeta, readTableState, type TableSearchParams } from "@/lib/table-pagination";
 import { toPlain } from "@/lib/utils";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
 function money(value: any) {
   return `PKR ${Number(value || 0).toLocaleString()}`;
 }
 
-function compactMoney(value: number) {
-  return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
-}
-
-export default async function ProductsPage() {
+export default async function ProductsPage({ searchParams }: { searchParams?: TableSearchParams }) {
   const user = await getCurrentUser();
-  const [productsRaw, categoriesRaw, suppliersRaw] = await Promise.all([
-    prisma.product.findMany({ where: { shopId: user!.shopId }, include: { category: true, supplier: true }, orderBy: { updatedAt: "desc" } }),
+  const table = readTableState(searchParams);
+  const productFilters: any[] = [];
+  if (table.query) {
+    productFilters.push({
+      OR: [
+        { name: contains(table.query) },
+        { sku: contains(table.query) },
+        { barcode: contains(table.query) },
+        { brand: contains(table.query) },
+        { location: contains(table.query) },
+        { aisle: contains(table.query) },
+        { shelf: contains(table.query) },
+        { productType: contains(table.query) },
+        { category: { is: { name: contains(table.query) } } },
+        { supplier: { is: { name: contains(table.query) } } }
+      ]
+    });
+  }
+  if (table.status) productFilters.push({ status: table.status });
+  if (table.facet) productFilters.push({ category: { is: { name: table.facet } } });
+  const productDateRange = dateRange("updatedAt", table.dateFrom, table.dateTo);
+  if (productDateRange) productFilters.push(productDateRange);
+  const productWhere = { shopId: user!.shopId, ...(productFilters.length ? { AND: productFilters } : {}) };
+  const [productsRaw, productsTotal, categoriesRaw, suppliersRaw, metricProducts] = await Promise.all([
+    prisma.product.findMany({ where: productWhere, include: { category: true, supplier: true }, orderBy: { updatedAt: "desc" }, skip: table.skip, take: table.take }),
+    prisma.product.count({ where: productWhere }),
     prisma.category.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } }),
-    prisma.supplier.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } })
+    prisma.supplier.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } }),
+    prisma.product.findMany({ where: { shopId: user!.shopId, status: "ACTIVE" }, select: { stockQty: true, costPrice: true, reorderLevel: true } })
   ]);
   const products = toPlain(productsRaw).map((product: any) => ({
     ...product,
@@ -39,16 +57,11 @@ export default async function ProductsPage() {
   }));
   const categories = toPlain(categoriesRaw);
   const suppliers = toPlain(suppliersRaw);
-  const activeProducts = products.filter((product: any) => product.status === "ACTIVE");
+  const activeProducts = metricProducts;
   const value = activeProducts.reduce((sum: number, product: any) => sum + product.stockQty * Number(product.costPrice), 0);
   const low = activeProducts.filter((product: any) => product.stockQty <= product.reorderLevel);
-  const healthScore = Math.max(0, 100 - Math.round((low.length / Math.max(activeProducts.length, 1)) * 100));
-  const categoryValue = sumByGroup(activeProducts, (product: any) => product.categoryName, (product: any) => product.stockQty * Number(product.costPrice), 8);
-  const nav = workspaceNav(user?.role);
-  const currentPath = workspacePath(user?.role, "products");
-
   return (
-    <AppShell nav={nav} heading={workspaceHeading(user?.role)} currentPath={currentPath} user={user}>
+    <>
       <SectionHeader eyebrow="Inventory" title="Product and stock intelligence" description="Manage SKUs, pricing, stock risk, reorder levels and inventory value from one role-aware workspace." />
       <div className="module-command-grid">
         <ModuleHero
@@ -79,30 +92,22 @@ export default async function ProductsPage() {
         <MetricCard icon={Boxes} title="Inventory value" value={money(value)} tone="violet" />
         <MetricCard icon={AlertTriangle} title="Low stock" value={low.length} tone="amber" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
-        <RingScoreCard
-          title="Stock health"
-          description="A single read on reorder pressure across active inventory."
-          score={healthScore}
-          value={`${healthScore}%`}
-          label="Ready"
-          badge="Health"
-        />
-        <DonutBreakdownCard
-          title="Category value mix"
-          description="Where inventory capital is concentrated across the catalog."
-          data={categoryValue}
-          centerValue={compactMoney(value)}
-          centerLabel="Stock value"
-          format="money"
-        />
-      </div>
       <div className="mt-6">
         <CrudManager
           title="Inventory master"
           description="Create, edit, archive and review product records. Stock edits create adjustment movements automatically."
           endpoint="/api/products"
           rows={products}
+          pagination={paginationMeta(table, productsTotal)}
+          filterConfig={{
+            statusKey: "status",
+            statusOptions: ["ACTIVE", "ARCHIVED"],
+            facetKey: "categoryName",
+            facetLabel: "Category",
+            facetOptions: categories.map((category: any) => category.name),
+            dateKey: "updatedAt",
+            dateLabel: "Updated"
+          }}
           fields={[
             { key: "name", label: "Product name", required: true },
             { key: "sku", label: "SKU" },
@@ -144,6 +149,6 @@ export default async function ProductsPage() {
           deleteVerb="Archive"
         />
       </div>
-    </AppShell>
+    </>
   );
 }

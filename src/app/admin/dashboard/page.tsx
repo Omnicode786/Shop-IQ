@@ -1,23 +1,18 @@
-import { format } from "date-fns";
-import { AlertTriangle, ArrowUpRight, DollarSign, Package, ReceiptText, Sparkles, TrendingUp, Truck, Users } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
+import { BarChart3, DollarSign, Package, ReceiptText, TrendingUp, Truck, Users, WalletCards } from "lucide-react";
 import { ActivityFeed } from "@/components/workspace/activity-feed";
 import {
-  BubbleInsightCard,
-  ComparativeBarsCard,
   DonutBreakdownCard,
-  RankedBarsCard,
   TrendAreaCard
 } from "@/components/workspace/analytics-cards";
 import { DataTable } from "@/components/workspace/data-table";
 import { MetricCard } from "@/components/workspace/metric-card";
+import { QuickActions } from "@/components/workspace/quick-actions";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getCurrentUser } from "@/lib/auth";
-import type { TimelineDatum } from "@/lib/chart-helpers";
 import { getDashboardSnapshot } from "@/lib/data";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
+import { workspacePath } from "@/lib/workspace";
 
 function money(value: number) {
   return `PKR ${Math.round(value).toLocaleString()}`;
@@ -27,12 +22,6 @@ function compactMoney(value: number) {
   return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
 }
 
-function riskTone(score: number) {
-  if (score >= 45) return "High attention";
-  if (score >= 18) return "Watch closely";
-  return "Stable";
-}
-
 function greeting() {
   const hour = new Date().getHours();
   if (hour < 12) return "Good morning";
@@ -40,54 +29,26 @@ function greeting() {
   return "Good evening";
 }
 
-type HeroBarDatum = {
-  label: string;
-  value: number;
-  height: number;
-};
-
-function buildHeroBars(data: TimelineDatum[] = []): HeroBarDatum[] {
-  const points = data.slice(-12);
-  const maxValue = Math.max(...points.map((item) => Number(item.value || 0)), 0);
-
-  return points.map((item) => {
-    const value = Number(item.value || 0);
-    return {
-      label: item.label,
-      value,
-      height: maxValue ? Math.max(12, Math.round((value / maxValue) * 100)) : 8
-    };
-  });
-}
-
-function HeroBar({ datum, index }: { datum: HeroBarDatum; index: number }) {
-  return <span title={`${datum.label}: ${money(datum.value)}`} style={{ height: `${datum.height}%`, animationDelay: `${index * 34}ms` }} />;
-}
-
-function RetailPulseHero({ name, metrics, revenueTimeline }: { name?: string; metrics: any; revenueTimeline: TimelineDatum[] }) {
-  const bars = buildHeroBars(revenueTimeline);
-  const today = format(new Date(), "EEEE, dd MMM");
+function RetailPulseHero({ name, metrics }: { name?: string; metrics: any }) {
   const healthScore = Math.max(0, 100 - metrics.stockRiskScore);
 
   return (
-    <Card className="dashboard-hero overflow-hidden">
-      <CardContent className="relative p-5 md:p-6">
+    <Card className="dashboard-hero dashboard-hero-compact overflow-hidden">
+      <CardContent className="relative p-4 md:p-5">
         <div className="hero-orbit" aria-hidden="true" />
-        <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="max-w-2xl">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="hero-badge">
-                <Sparkles className="size-3.5" />
-                Live store pulse
+                Store command
               </Badge>
-              <Badge variant="secondary">{riskTone(metrics.stockRiskScore)}</Badge>
+              <Badge variant="secondary">{metrics.productCount.toLocaleString()} SKUs</Badge>
             </div>
-            <p className="text-sm text-white/62">{today}</p>
-            <h2 className="mt-2 break-normal text-2xl font-semibold tracking-normal text-white md:text-3xl 2xl:text-4xl">
+            <h2 className="break-normal text-2xl font-semibold tracking-normal text-white md:text-3xl">
               {greeting()}, {name || "ShopIQ operator"}.
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-white/64">
-              A compact live read on revenue, stock exposure, dues and customer activity for the next operating move.
+            <p className="mt-2 max-w-xl text-sm leading-6 text-white/66">
+              Your most important operating signals are ready below: sell, restock, collect and report without hunting through menus.
             </p>
           </div>
           <div className="hero-value-panel hero-command-panel">
@@ -95,74 +56,11 @@ function RetailPulseHero({ name, metrics, revenueTimeline }: { name?: string; me
               <span>{healthScore}%</span>
             </div>
             <div className="min-w-0">
-              <p className="text-xs uppercase tracking-[0.16em] text-white/54">Inventory health</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{money(metrics.monthlyRevenue)}</p>
-              <p className="mt-2 text-xs text-white/58">{metrics.revenueWindowLabel}</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-white/54">Inventory health</p>
+              <p className="mt-1 text-xl font-semibold text-white">{metrics.lowStockCount} low stock</p>
+              <p className="mt-1 text-xs text-white/58">Keep shelves ready before checkout slows down.</p>
             </div>
           </div>
-        </div>
-        <div className="relative z-10 mt-5 grid gap-3 md:grid-cols-3">
-          <div className="hero-stat">
-            <DollarSign className="size-4" />
-            <div>
-              <p>{metrics.salesWindowLabel}</p>
-              <strong>{money(metrics.todaySales)}</strong>
-            </div>
-          </div>
-          <div className="hero-stat">
-            <AlertTriangle className="size-4" />
-            <div>
-              <p>Stock risk</p>
-              <strong>{metrics.stockRiskScore}%</strong>
-            </div>
-          </div>
-          <div className="hero-stat">
-            <Users className="size-4" />
-            <div>
-              <p>Customer dues</p>
-              <strong>{money(metrics.customerDues)}</strong>
-            </div>
-          </div>
-        </div>
-        <div className="hero-micro-chart relative z-10" aria-hidden="true">
-          {bars.map((datum, index) => <HeroBar key={`${datum.label}-${index}`} datum={datum} index={index} />)}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function RiskPanel({ lowStock, supplierDues }: { lowStock: any[]; supplierDues: number }) {
-  return (
-    <Card className="risk-panel overflow-hidden">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Operational focus</p>
-            <h3 className="mt-2 text-xl font-semibold tracking-normal">Stock and dues</h3>
-          </div>
-          <div className="flex size-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-            <ArrowUpRight className="size-5" />
-          </div>
-        </div>
-        <div className="mt-5 grid gap-3">
-          <div className="risk-line">
-            <span>Low stock SKUs</span>
-            <strong>{lowStock.length}</strong>
-          </div>
-          <div className="risk-line">
-            <span>Supplier dues</span>
-            <strong>{money(supplierDues)}</strong>
-          </div>
-        </div>
-        <div className="mt-5 flex flex-col gap-3">
-          {lowStock.slice(0, 4).map((product) => (
-            <div key={product.id} className="inventory-chip">
-              <span className="truncate">{product.name}</span>
-              <strong>{product.stockQty} left</strong>
-            </div>
-          ))}
-          {!lowStock.length ? <div className="empty-state">Inventory is above reorder levels.</div> : null}
         </div>
       </CardContent>
     </Card>
@@ -174,7 +72,7 @@ export default async function AdminDashboard() {
   const snapshot = await getDashboardSnapshot(user!.shopId, user?.role);
 
   return (
-    <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "dashboard")} user={user}>
+    <>
       <SectionHeader
         eyebrow="Command center"
         title="Overview"
@@ -182,43 +80,43 @@ export default async function AdminDashboard() {
         action={<Badge variant="secondary">Role: {user?.role.toLowerCase()}</Badge>}
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,0.58fr)]">
-        <RetailPulseHero name={user?.name} metrics={snapshot.metrics} revenueTimeline={snapshot.charts.revenueTimeline} />
-        <RiskPanel lowStock={snapshot.lowStock} supplierDues={snapshot.metrics.supplierDues} />
+      <div>
+        <RetailPulseHero name={user?.name} metrics={snapshot.metrics} />
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4">
+        <QuickActions
+          title="Move straight to work"
+          actions={[
+            { href: workspacePath(user?.role, "billing"), label: "Create invoice", description: "Open the guided billing flow", icon: ReceiptText, tone: "blue" },
+            { href: workspacePath(user?.role, "customers"), label: "Add customer", description: "Create or update ledger accounts", icon: Users, tone: "emerald" },
+            { href: workspacePath(user?.role, "payments"), label: "Record payment", description: "Settle customer or supplier balances", icon: WalletCards, tone: "violet" },
+            { href: workspacePath(user?.role, "products"), label: "Add product", description: "Create inventory and stock rules", icon: Package, tone: "amber" },
+            { href: workspacePath(user?.role, "products"), label: "Manage stock", description: "Review low stock and locations", icon: Truck, tone: "rose" },
+            ...(user?.role === "STAFF" ? [] : [{ href: workspacePath(user?.role, "reports"), label: "View reports", description: "Export the general PDF report", icon: BarChart3, tone: "blue" as const }])
+          ]}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
         <MetricCard icon={DollarSign} title="Sales pulse" value={money(snapshot.metrics.todaySales)} helper={snapshot.metrics.salesWindowLabel} tone="emerald" />
-        <MetricCard icon={TrendingUp} title="Revenue window" value={money(snapshot.metrics.monthlyRevenue)} helper={snapshot.metrics.revenueWindowLabel} />
         <MetricCard icon={Package} title="Inventory value" value={money(snapshot.metrics.inventoryValue)} helper={`${snapshot.metrics.productCount} active SKUs`} tone="violet" />
-        <MetricCard icon={ReceiptText} title="Stock risk" value={`${snapshot.metrics.stockRiskScore}%`} helper={`${snapshot.metrics.lowStockCount} products below threshold`} tone="amber" />
+        <MetricCard icon={TrendingUp} title="Low stock" value={snapshot.metrics.lowStockCount} helper="Needs reorder review" tone="amber" />
       </div>
 
-      <div className="mt-6">
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.72fr)]">
         <TrendAreaCard
           title="Revenue rhythm"
-          description="Daily gross sales over the active trading window."
+          description="Daily gross sales over the active window."
           value={money(snapshot.metrics.monthlyRevenue)}
           caption={snapshot.metrics.revenueWindowLabel}
           data={snapshot.charts.revenueTimeline}
           badge="14 days"
           format="money"
         />
-      </div>
-
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
-        <ComparativeBarsCard
-          title="Cashflow pressure"
-          description="Customer receipts against supplier payouts, shown day by day."
-          data={snapshot.charts.cashflowTimeline}
-          valueLabel="Receipts"
-          secondaryLabel="Payouts"
-          badge="Cash"
-          format="money"
-        />
         <DonutBreakdownCard
           title="Inventory value orbit"
-          description="Category concentration with the large center value kept scannable."
+          description="Category concentration by stock value."
           data={snapshot.charts.categoryValue}
           centerValue={compactMoney(snapshot.metrics.inventoryValue)}
           centerLabel="Inventory"
@@ -227,27 +125,7 @@ export default async function AdminDashboard() {
         />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <BubbleInsightCard
-          title="Operating bubbles"
-          description="A quick board for the four numbers that usually drive the next move."
-          bubbles={[
-            { label: "Sales pulse", value: compactMoney(snapshot.metrics.todaySales), size: "lg" },
-            { label: "Customer dues", value: compactMoney(snapshot.metrics.customerDues), size: "md" },
-            { label: "Supplier dues", value: compactMoney(snapshot.metrics.supplierDues), size: "sm" },
-            { label: "Low stock", value: snapshot.metrics.lowStockCount, size: "sm" }
-          ]}
-          badge="Live"
-        />
-        <RankedBarsCard
-          title="Receivable leaders"
-          description="Customers with the highest outstanding balances."
-          rows={snapshot.charts.customerDueRank}
-          format="money"
-        />
-      </div>
-
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+      <div className="mt-5 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
         <DataTable title="Low stock watchlist" description="Items at or below reorder level, sorted by operational urgency.">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
@@ -301,6 +179,6 @@ export default async function AdminDashboard() {
           </Card>
         </div>
       </div>
-    </AppShell>
+    </>
   );
 }

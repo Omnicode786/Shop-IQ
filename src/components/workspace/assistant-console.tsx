@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { FormattedAiContent } from "@/utils/ai-content";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 type ChatMessage = {
@@ -257,7 +258,11 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ threadId, question: finalQuestion, clientMessages })
       })
-        .then(async (response) => ({ ok: true as const, data: await response.json() }))
+        .then(async (response) => {
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.error || "Assistant request failed.");
+          return { ok: true as const, data };
+        })
         .catch((error) => ({ ok: false as const, error }));
       await waitForUserMessageLanding();
       setShowThinking(true);
@@ -274,6 +279,7 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
       router.refresh();
     } catch {
       setShowThinking(false);
+      toast.error("The assistant could not complete that request right now.");
       typeAiMessage({ content: "## Assistant unavailable\n\nI could not complete that request right now. Please try again." });
     } finally {
       setLoading(false);
@@ -303,7 +309,11 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
           approval: { decision, previewId: previewAction.previewId }
         })
       })
-        .then(async (response) => ({ ok: true as const, data: await response.json() }))
+        .then(async (response) => {
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.error || "Assistant approval failed.");
+          return { ok: true as const, data };
+        })
         .catch((error) => ({ ok: false as const, error }));
       await waitForUserMessageLanding();
       setShowThinking(true);
@@ -321,6 +331,7 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
       router.refresh();
     } catch {
       setShowThinking(false);
+      toast.error("The assistant could not complete that approval request right now.");
       typeAiMessage({ content: "## Assistant unavailable\n\nI could not complete that approval request right now. Please try again." });
     } finally {
       setLoading(false);

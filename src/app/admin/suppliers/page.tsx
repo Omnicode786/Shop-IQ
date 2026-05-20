@@ -1,38 +1,62 @@
 import { Truck, WalletCards } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
-import { RankedBarsCard, RingScoreCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
-import { topRows } from "@/lib/chart-helpers";
 import { can } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { contains, dateRange, paginationMeta, readTableState, type TableSearchParams } from "@/lib/table-pagination";
 import { toPlain } from "@/lib/utils";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
 function money(value: any) {
   return `PKR ${Number(value || 0).toLocaleString()}`;
 }
 
-export default async function Suppliers() {
+export default async function Suppliers({ searchParams }: { searchParams?: TableSearchParams }) {
   const user = await getCurrentUser();
-  const suppliersRaw = await prisma.supplier.findMany({ where: { shopId: user!.shopId }, include: { purchases: true, payments: true }, orderBy: { balance: "desc" } });
+  const table = readTableState(searchParams);
+  const supplierFilters: any[] = [];
+  if (table.query) {
+    supplierFilters.push({
+      OR: [
+        { name: contains(table.query) },
+        { phone: contains(table.query) },
+        { email: contains(table.query) },
+        { address: contains(table.query) },
+        { contactPerson: contains(table.query) },
+        { supplierType: contains(table.query) },
+        { paymentTerms: contains(table.query) },
+        { ntn: contains(table.query) },
+        { gstNumber: contains(table.query) },
+        { notes: contains(table.query) }
+      ]
+    });
+  }
+  if (table.facet) supplierFilters.push({ supplierType: table.facet });
+  const supplierDateRange = dateRange("updatedAt", table.dateFrom, table.dateTo);
+  if (supplierDateRange) supplierFilters.push(supplierDateRange);
+  const supplierWhere = { shopId: user!.shopId, ...(supplierFilters.length ? { AND: supplierFilters } : {}) };
+  const [suppliersRaw, suppliersTotal, supplierCount, supplierBalance, supplierTypesRaw] = await Promise.all([
+    prisma.supplier.findMany({ where: supplierWhere, include: { _count: { select: { purchases: true } } }, orderBy: { balance: "desc" }, skip: table.skip, take: table.take }),
+    prisma.supplier.count({ where: supplierWhere }),
+    prisma.supplier.count({ where: { shopId: user!.shopId } }),
+    prisma.supplier.aggregate({ where: { shopId: user!.shopId }, _sum: { balance: true }, _avg: { reliabilityScore: true } }),
+    prisma.supplier.findMany({ where: { shopId: user!.shopId, supplierType: { not: null } }, select: { supplierType: true }, distinct: ["supplierType"], orderBy: { supplierType: "asc" } })
+  ]);
   const suppliers = toPlain(suppliersRaw).map((supplier: any) => ({
     ...supplier,
-    purchaseCount: supplier.purchases.length,
+    purchaseCount: supplier._count?.purchases || 0,
     supplierTypeDisplay: supplier.supplierType || "General",
     leadTimeDisplay: supplier.leadTimeDays === null || supplier.leadTimeDays === undefined ? "-" : `${supplier.leadTimeDays} days`,
     reliabilityDisplay: `${supplier.reliabilityScore}%`,
     balanceDisplay: money(supplier.balance)
   }));
-  const dues = suppliers.reduce((sum: number, supplier: any) => sum + Math.max(Number(supplier.balance), 0), 0);
-  const avgReliability = Math.round(suppliers.reduce((sum: number, supplier: any) => sum + Number(supplier.reliabilityScore || 0), 0) / Math.max(suppliers.length, 1));
-  const payableRank = topRows(suppliers, (supplier: any) => supplier.name, (supplier: any) => Number(supplier.balance), 6);
+  const dues = Math.max(Number(supplierBalance._sum.balance || 0), 0);
+  const supplierTypeOptions = toPlain(supplierTypesRaw).map((supplier: any) => supplier.supplierType).filter(Boolean);
 
   return (
-    <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "suppliers")} user={user}>
+    <>
       <SectionHeader eyebrow="Suppliers" title="Supplier payable and reliability cockpit" description="Monitor supplier balances, purchases, payables and reliability signals." />
       <div className="module-command-grid">
         <ModuleHero
@@ -42,9 +66,9 @@ export default async function Suppliers() {
           icon={Truck}
           badge="Payable view"
           stats={[
-            { label: "Suppliers", value: suppliers.length },
+            { label: "Suppliers", value: supplierCount },
             { label: "Payables", value: money(dues) },
-            { label: "Avg reliability", value: `${Math.round(suppliers.reduce((sum: number, supplier: any) => sum + Number(supplier.reliabilityScore || 0), 0) / Math.max(suppliers.length, 1))}%` }
+            { label: "Avg reliability", value: `${Math.round(Number(supplierBalance._avg.reliabilityScore || 0))}%` }
           ]}
         />
         <ModuleInsightPanel
@@ -52,31 +76,15 @@ export default async function Suppliers() {
           description="Keep supplier records complete before purchasing so stock intake and payables stay clean."
           icon={WalletCards}
           insights={[
-            { label: "Supplier accounts", value: suppliers.length },
+            { label: "Supplier accounts", value: supplierCount },
             { label: "Outstanding payable", value: money(dues) },
             { label: "Purchase-linked", value: suppliers.filter((supplier: any) => supplier.purchaseCount > 0).length }
           ]}
         />
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <MetricCard icon={Truck} title="Suppliers" value={suppliers.length} />
+        <MetricCard icon={Truck} title="Suppliers" value={supplierCount} />
         <MetricCard icon={WalletCards} title="Payables" value={money(dues)} tone="rose" />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
-        <RingScoreCard
-          title="Reliability pulse"
-          description="Average supplier reliability across active vendor accounts."
-          score={avgReliability}
-          value={`${avgReliability}%`}
-          label="Reliable"
-          badge="Supply"
-        />
-        <RankedBarsCard
-          title="Top payables"
-          description="Supplier balances ordered by cash pressure."
-          rows={payableRank}
-          format="money"
-        />
       </div>
       <div className="mt-6">
         <CrudManager
@@ -84,6 +92,14 @@ export default async function Suppliers() {
           description="Admins and managers can create, edit and remove unused supplier records. Staff keep read-only visibility."
           endpoint="/api/suppliers"
           rows={suppliers}
+          pagination={paginationMeta(table, suppliersTotal)}
+          filterConfig={{
+            facetKey: "supplierTypeDisplay",
+            facetLabel: "Type",
+            facetOptions: supplierTypeOptions,
+            dateKey: "updatedAt",
+            dateLabel: "Updated"
+          }}
           fields={[
             { key: "name", label: "Supplier name", required: true },
             { key: "phone", label: "Phone" },
@@ -114,6 +130,6 @@ export default async function Suppliers() {
           createLabel="Add supplier"
         />
       </div>
-    </AppShell>
+    </>
   );
 }

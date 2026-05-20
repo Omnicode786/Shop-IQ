@@ -1,27 +1,14 @@
 import { BarChart3, Package, WalletCards } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
-import {
-  BubbleInsightCard,
-  ComparativeBarsCard,
-  DonutBreakdownCard,
-  RankedBarsCard,
-  RingScoreCard,
-  StackedSignalCard,
-  TrendAreaCard
-} from "@/components/workspace/analytics-cards";
+import { DataTable } from "@/components/workspace/data-table";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
+import { ReportExportButton } from "@/components/workspace/report-export-button";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { getDashboardSnapshot } from "@/lib/data";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
 function money(value: number) {
   return `PKR ${Math.round(value).toLocaleString()}`;
-}
-
-function compactMoney(value: number) {
-  return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
 }
 
 export default async function Reports() {
@@ -30,11 +17,12 @@ export default async function Reports() {
   const netDues = snapshot.metrics.customerDues - snapshot.metrics.supplierDues;
 
   return (
-    <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "reports")} user={user}>
+    <>
       <SectionHeader
         eyebrow="Reports"
         title="Business intelligence reports"
         description="Charts for product velocity, inventory value, stock risk, customer dues and supplier pressure."
+        action={<ReportExportButton />}
       />
       <div className="module-command-grid">
         <ModuleHero
@@ -65,86 +53,56 @@ export default async function Reports() {
         <MetricCard icon={Package} title="Inventory" value={money(snapshot.metrics.inventoryValue)} tone="violet" />
         <MetricCard icon={WalletCards} title="Net dues" value={money(netDues)} tone="amber" />
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[0.82fr_1.18fr_0.9fr]">
-        <RingScoreCard
-          title="Business control score"
-          description="Stock health expressed as one fast confidence reading."
-          score={Math.max(0, 100 - snapshot.metrics.stockRiskScore)}
-          value={`${Math.max(0, 100 - snapshot.metrics.stockRiskScore)}%`}
-          label="Control"
-          badge="Score"
-        />
-        <TrendAreaCard
-          title="Revenue trend"
-          description="Daily gross sales for the current operating window."
-          value={money(snapshot.metrics.monthlyRevenue)}
-          caption={snapshot.metrics.revenueWindowLabel}
-          data={snapshot.charts.revenueTimeline}
-          badge="Revenue"
-          format="money"
-        />
-        <StackedSignalCard
-          title="Invoice status"
-          description="Settlement state across recent invoices."
-          data={snapshot.charts.invoiceStatus}
-          totalLabel={`${snapshot.invoices.length} recent invoices`}
-          badge="Billing"
-        />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <ComparativeBarsCard
-          title="Cashflow comparison"
-          description="Receipts and supplier payouts in the same reporting lane."
-          data={snapshot.charts.cashflowTimeline}
-          valueLabel="Receipts"
-          secondaryLabel="Payouts"
-          badge="Cash"
-          format="money"
-        />
-        <DonutBreakdownCard
-          title="Category value"
-          description="Inventory concentration by product category."
-          data={snapshot.charts.categoryValue}
-          centerValue={compactMoney(snapshot.metrics.inventoryValue)}
-          centerLabel="Inventory"
-          format="money"
-        />
-      </div>
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <RankedBarsCard
-          title="Fast moving products"
-          description="Products with the strongest live sale movement."
-          rows={snapshot.fastMoving.map((item: any) => ({ name: item.name, value: item.qty }))}
-          badge="Velocity"
-        />
-        <RankedBarsCard
-          title="Customer dues"
-          description="Largest receivable balances by customer."
-          rows={snapshot.charts.customerDueRank}
-          format="money"
-          badge="Dues"
-        />
+        <DataTable title="Fast moving products" description="Products with the strongest recent sale movement.">
+          <table className="w-full text-sm">
+            <tbody>
+              {snapshot.fastMoving.slice(0, 8).map((item: any, index: number) => (
+                <tr key={`${item.name}-${index}`} className="border-b border-border/60">
+                  <td className="px-5 py-4 font-medium">{item.name}</td>
+                  <td className="px-5 py-4 text-right">{item.qty} sold</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+        <DataTable title="Low stock watchlist" description="Products at or below reorder level.">
+          <table className="w-full text-sm">
+            <tbody>
+              {snapshot.lowStock.slice(0, 8).map((product: any) => (
+                <tr key={product.id} className="border-b border-border/60">
+                  <td className="px-5 py-4 font-medium">{product.name}</td>
+                  <td className="px-5 py-4 text-right">{product.stockQty} left</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+        <DataTable title="Customer dues" description="Largest receivable balances requiring follow-up.">
+          <table className="w-full text-sm">
+            <tbody>
+              {snapshot.customers.slice(0, 8).map((customer: any) => (
+                <tr key={customer.id} className="border-b border-border/60">
+                  <td className="px-5 py-4 font-medium">{customer.name}</td>
+                  <td className="px-5 py-4 text-right">{money(Number(customer.balance))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+        <DataTable title="Supplier payables" description="Outstanding balances owed to suppliers.">
+          <table className="w-full text-sm">
+            <tbody>
+              {snapshot.suppliers.slice(0, 8).map((supplier: any) => (
+                <tr key={supplier.id} className="border-b border-border/60">
+                  <td className="px-5 py-4 font-medium">{supplier.name}</td>
+                  <td className="px-5 py-4 text-right">{money(Number(supplier.balance))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
       </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
-        <BubbleInsightCard
-          title="Executive summary bubbles"
-          description="Large readings for the decisions that usually matter first."
-          bubbles={[
-            { label: "Revenue", value: compactMoney(snapshot.metrics.monthlyRevenue), size: "lg" },
-            { label: "Inventory", value: compactMoney(snapshot.metrics.inventoryValue), size: "md" },
-            { label: "Net dues", value: compactMoney(netDues), size: "sm" },
-            { label: "Low stock", value: snapshot.metrics.lowStockCount, size: "sm" }
-          ]}
-          badge="Board"
-        />
-        <RankedBarsCard
-          title="Margin leaders"
-          description="Stock with the highest potential gross margin still on hand."
-          rows={snapshot.charts.marginLeaders}
-          format="money"
-          badge="Margin"
-        />
-      </div>
-    </AppShell>
+    </>
   );
 }

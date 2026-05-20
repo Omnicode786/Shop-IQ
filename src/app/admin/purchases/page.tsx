@@ -1,29 +1,41 @@
 import { Truck } from "lucide-react";
-import { AppShell } from "@/components/workspace/app-shell";
-import { DonutBreakdownCard, TrendAreaCard } from "@/components/workspace/analytics-cards";
 import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
+import { PurchaseFlow } from "@/components/workspace/purchase-flow";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { buildDailySeries, statusSegments } from "@/lib/chart-helpers";
 import { prisma } from "@/lib/prisma";
+import { contains, dateRange, paginationMeta, readTableState, type TableSearchParams } from "@/lib/table-pagination";
 import { formatDate, toPlain } from "@/lib/utils";
-import { workspaceHeading, workspaceNav, workspacePath } from "@/lib/workspace";
 
 function money(value: any) {
   return `PKR ${Number(value || 0).toLocaleString()}`;
 }
 
-function compactMoney(value: number) {
-  return `PKR ${Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0))}`;
-}
-
-export default async function Purchases() {
+export default async function Purchases({ searchParams }: { searchParams?: TableSearchParams }) {
   const user = await getCurrentUser();
-  const [purchasesRaw, suppliersRaw, productsRaw] = await Promise.all([
-    prisma.purchase.findMany({ where: { shopId: user!.shopId }, include: { supplier: true, items: { include: { product: true } } }, orderBy: { purchaseDate: "desc" }, take: 150 }),
+  const table = readTableState(searchParams);
+  const purchaseFilters: any[] = [];
+  if (table.query) {
+    purchaseFilters.push({
+      OR: [
+        { purchaseNo: contains(table.query) },
+        { notes: contains(table.query) },
+        { supplier: { is: { name: contains(table.query) } } }
+      ]
+    });
+  }
+  if (table.status) purchaseFilters.push({ status: table.status });
+  if (table.facet) purchaseFilters.push({ supplier: { is: { name: table.facet } } });
+  const purchaseDateRange = dateRange("purchaseDate", table.dateFrom, table.dateTo);
+  if (purchaseDateRange) purchaseFilters.push(purchaseDateRange);
+  const purchaseWhere = { shopId: user!.shopId, ...(purchaseFilters.length ? { AND: purchaseFilters } : {}) };
+  const [purchasesRaw, purchasesTotal, purchaseMetrics, suppliersRaw, productsRaw] = await Promise.all([
+    prisma.purchase.findMany({ where: purchaseWhere, include: { supplier: true, _count: { select: { items: true } } }, orderBy: { purchaseDate: "desc" }, skip: table.skip, take: table.take }),
+    prisma.purchase.count({ where: purchaseWhere }),
+    prisma.purchase.aggregate({ where: { shopId: user!.shopId }, _sum: { total: true, dueAmount: true }, _count: true }),
     prisma.supplier.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } }),
     prisma.product.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } })
   ]);
@@ -33,17 +45,17 @@ export default async function Purchases() {
     purchaseDateDisplay: formatDate(purchase.purchaseDate),
     totalDisplay: money(purchase.total),
     dueDisplay: money(purchase.dueAmount),
-    itemCount: purchase.items.length
+    itemCount: purchase._count?.items || 0
   }));
   const suppliers = toPlain(suppliersRaw);
   const products = toPlain(productsRaw);
-  const total = purchases.reduce((sum: number, purchase: any) => sum + Number(purchase.total), 0);
-  const due = purchases.reduce((sum: number, purchase: any) => sum + Number(purchase.dueAmount || 0), 0);
-  const purchaseTrend = buildDailySeries(purchases, (purchase: any) => purchase.purchaseDate, (purchase: any) => Number(purchase.total), 14);
-  const statusRows = statusSegments(purchases, (purchase: any) => purchase.status);
+  const total = Number(purchaseMetrics._sum.total || 0);
+  const due = Number(purchaseMetrics._sum.dueAmount || 0);
+  const purchaseCount = purchaseMetrics._count;
+  const canCreatePurchase = can(user?.role, "purchases", "create");
 
   return (
-    <AppShell nav={workspaceNav(user?.role)} heading={workspaceHeading(user?.role)} currentPath={workspacePath(user?.role, "purchases")} user={user}>
+    <>
       <SectionHeader eyebrow="Purchases" title="Supplier purchase and stock intake" description="Track purchase orders, receiving status, payables and stock intake with protected reversals." />
       <div className="module-command-grid">
         <ModuleHero
@@ -53,7 +65,7 @@ export default async function Purchases() {
           icon={Truck}
           badge="Receiving desk"
           stats={[
-            { label: "Purchases", value: purchases.length },
+            { label: "Purchases", value: purchaseCount },
             { label: "Purchased value", value: money(total) },
             { label: "Suppliers", value: suppliers.length }
           ]}
@@ -63,35 +75,16 @@ export default async function Purchases() {
           description="Purchases remain searchable by supplier, status, due amount and stock intake record."
           icon={Truck}
           insights={[
-            { label: "Purchase records", value: purchases.length },
-            { label: "Open due", value: money(purchases.reduce((sum: number, purchase: any) => sum + Number(purchase.dueAmount || 0), 0)) },
+            { label: "Purchase records", value: purchaseCount },
+            { label: "Open due", value: money(due) },
             { label: "Products available", value: products.length }
           ]}
         />
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-3">
-        <MetricCard icon={Truck} title="Purchases" value={purchases.length} />
+        <MetricCard icon={Truck} title="Purchases" value={purchaseCount} />
         <MetricCard icon={Truck} title="Purchased value" value={money(total)} tone="violet" />
         <MetricCard icon={Truck} title="Open payable" value={money(due)} tone="rose" />
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <TrendAreaCard
-          title="Purchase rhythm"
-          description="Stock intake value across the latest purchasing window."
-          value={compactMoney(total)}
-          caption={`${purchases.length} recent purchase records`}
-          data={purchaseTrend}
-          badge="Intake"
-          format="money"
-        />
-        <DonutBreakdownCard
-          title="Receiving status"
-          description="Purchase records grouped by operational receiving state."
-          data={statusRows}
-          centerValue={`${purchases.length}`}
-          centerLabel="Purchases"
-          badge="Status"
-        />
       </div>
       <div className="mt-6">
         <CrudManager
@@ -99,6 +92,16 @@ export default async function Purchases() {
           description="Create one-line stock intakes, update payable state and cancel received purchases with stock reversal."
           endpoint="/api/purchases"
           rows={purchases}
+          pagination={paginationMeta(table, purchasesTotal)}
+          filterConfig={{
+            statusKey: "status",
+            statusOptions: ["ORDERED", "RECEIVED", "PARTIAL", "CANCELLED"],
+            facetKey: "supplierName",
+            facetLabel: "Supplier",
+            facetOptions: suppliers.map((supplier: any) => supplier.name),
+            dateKey: "purchaseDate",
+            dateLabel: "Purchase date"
+          }}
           submitShape="purchase"
           fields={[
             { key: "purchaseNo", label: "Purchase number" },
@@ -120,7 +123,8 @@ export default async function Purchases() {
             { key: "dueDisplay", label: "Due" },
             { key: "status", label: "Status" }
           ]}
-          canCreate={can(user?.role, "purchases", "create")}
+          canCreate={canCreatePurchase}
+          createAction={<PurchaseFlow suppliers={suppliers} products={products} canCreate={canCreatePurchase} />}
           canUpdate={can(user?.role, "purchases", "update")}
           canDelete={can(user?.role, "purchases", "delete")}
           createLabel="Create purchase"
@@ -128,6 +132,6 @@ export default async function Purchases() {
           deleteVerb="Cancel"
         />
       </div>
-    </AppShell>
+    </>
   );
 }

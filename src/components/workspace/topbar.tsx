@@ -7,8 +7,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { UiModeToggle } from "@/components/ui-mode-toggle";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { GlassSurface } from "@/components/ui/glass-surface";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/lib/toast";
 import { isAdminRole } from "@/lib/workspace";
 
 export function Topbar({ user }: { user: { name: string; role: string } | null }) {
@@ -20,7 +20,10 @@ export function Topbar({ user }: { user: { name: string; role: string } | null }
   async function logout() {
     setLoggingOut(true);
     try {
-      await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin", cache: "no-store" });
+      const response = await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) toast.warning("Logout request had a problem, returning to login.");
+    } catch {
+      toast.warning("Logout request had a problem, returning to login.");
     } finally {
       router.replace("/login");
       router.refresh();
@@ -28,11 +31,11 @@ export function Topbar({ user }: { user: { name: string; role: string } | null }
   }
 
   return (
-    <div className="app-topbar sticky top-0 z-30 px-3 py-2 sm:px-5 lg:px-8">
-      <GlassSurface className="nav-surface mx-auto w-full max-w-[1600px]" height={64} borderRadius={28} borderWidth={0.14} borderGlow refractive backgroundOpacity={0.045} brightness={50} opacity={0.52} blur={11} displace={0.46} distortionScale={-190} redOffset={0} greenOffset={10} blueOffset={22} mixBlendMode="screen" saturation={1.34} innerClassName="flex h-full min-w-0 items-center gap-2.5 px-3 py-2 sm:gap-3 sm:px-4">
+    <header className="app-topbar sticky top-0 z-40 shrink-0 px-3 py-2 sm:px-5 lg:px-8">
+      <div className="topbar-shell mx-auto flex h-14 w-full max-w-[1440px] min-w-0 items-center gap-2.5 px-3 sm:gap-3 sm:px-4">
         <div className="topbar-search relative hidden max-w-xl flex-1 md:block">
           <Search className="topbar-search-icon pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="topbar-search-input h-10 border-white/30 bg-white/35 pl-10 shadow-none dark:bg-white/5" placeholder="Search inventory, bills, customers, suppliers..." />
+          <Input className="topbar-search-input h-10 pl-10 shadow-none" placeholder="Search inventory, bills, customers, suppliers..." />
         </div>
         <div className="topbar-actions ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
           <UiModeToggle compact className="hidden min-[540px]:flex xl:hidden" />
@@ -45,7 +48,7 @@ export function Topbar({ user }: { user: { name: string; role: string } | null }
               </Link>
             </Button>
           ) : null}
-          <div className="glass-subtle flex min-w-0 items-center gap-2.5 rounded-2xl px-2.5 py-1.5 transition-colors duration-300">
+          <div className="topbar-user-pill flex min-w-0 items-center gap-2.5 rounded-2xl px-2.5 py-1.5 transition-colors duration-300">
             <Avatar name={displayUser.name} className="size-8 text-xs" />
             <div className="hidden min-w-0 sm:block">
               <p className="truncate text-sm font-medium">{displayUser.name}</p>
@@ -56,7 +59,7 @@ export function Topbar({ user }: { user: { name: string; role: string } | null }
             <LogOut className="size-4" />
           </Button>
         </div>
-      </GlassSurface>
-    </div>
+      </div>
+    </header>
   );
 }

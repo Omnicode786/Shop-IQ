@@ -1390,3 +1390,382 @@ Use this short explanation when presenting:
 One very simple sentence:
 
 > DDL is the blueprint of ShopIQ's database, and DML is the daily retail activity happening inside that blueprint.
+
+## 28. Database Triggers, Row Triggers, Before/After Logic, And ShopIQ
+
+This section explains database triggers in general and how ShopIQ handles trigger-style business rules.
+
+### 28.1 What Is A Database Trigger?
+
+A database trigger is special logic stored inside the database that automatically runs when a specific database event happens.
+
+Common trigger events are:
+
+- `INSERT`
+- `UPDATE`
+- `DELETE`
+
+For example, a trigger can automatically create an audit log whenever a product is updated, or automatically reduce product stock whenever an invoice item is inserted.
+
+In PostgreSQL, triggers are usually created with DDL statements such as:
+
+```sql
+CREATE FUNCTION some_trigger_function()
+RETURNS trigger AS $$
+BEGIN
+  -- trigger logic here
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER some_trigger_name
+AFTER INSERT ON some_table
+FOR EACH ROW
+EXECUTE FUNCTION some_trigger_function();
+```
+
+### 28.2 Does ShopIQ Currently Use Physical PostgreSQL Triggers?
+
+No. ShopIQ currently does not use physical PostgreSQL trigger objects in the database.
+
+There are no `CREATE TRIGGER` statements in the current Prisma migrations, and there are no PostgreSQL trigger functions used as part of the schema.
+
+Instead, ShopIQ implements trigger-like business rules in the application layer using:
+
+- Prisma Client
+- Prisma transactions with `prisma.$transaction`
+- Zod validation before writes
+- role-based permission checks before writes
+- explicit related-row updates after writes
+- `ActivityLog` rows for audit history
+
+This means ShopIQ's behavior is still controlled and relationally consistent, but the logic is visible in the TypeScript API routes rather than hidden inside database trigger functions.
+
+### 28.3 Why ShopIQ Uses Application-Level Trigger Logic
+
+ShopIQ uses application-level trigger logic because the project is built with Next.js, TypeScript, Prisma, and PostgreSQL.
+
+This gives several advantages:
+
+- Business rules are easier to read in the same place as the API route.
+- Role-based access can be checked before a write happens.
+- Form validation can happen before data reaches the database.
+- Prisma transactions can still keep related writes atomic.
+- Errors can be returned as clean API responses instead of raw database trigger errors.
+- The logic is easier to explain in a DBMS project because the workflow is visible in the code.
+
+So, for instructor explanation:
+
+> ShopIQ does not currently depend on PostgreSQL triggers. It uses Prisma transactions to perform trigger-like behavior safely in the application layer.
+
+### 28.4 Row-Level Triggers
+
+A row-level trigger runs once for each affected row.
+
+Example:
+
+```sql
+FOR EACH ROW
+```
+
+If 5 invoice item rows are inserted, a row-level trigger would run 5 times.
+
+ShopIQ has row-trigger-like behavior in code. For example, when an invoice is created, every invoice item causes a related stock update and a stock movement row.
+
+Conceptually, this behaves like:
+
+```text
+For each invoice item:
+  reduce Product.stockQty
+  insert StockMovement row
+```
+
+In ShopIQ this is done inside the invoice creation transaction instead of a PostgreSQL trigger.
+
+Main row-trigger-like areas:
+
+| ShopIQ Workflow | Trigger-Like Behavior | Tables Affected |
+| --- | --- | --- |
+| Product created with opening stock | Creates an opening stock movement for that product | `Product`, `StockMovement`, `ActivityLog` |
+| Product stock edited | Creates an adjustment movement showing before and after stock | `Product`, `StockMovement`, `ActivityLog` |
+| Invoice created | For each invoice item, stock is reduced and a sale stock movement is created | `Invoice`, `InvoiceItem`, `Product`, `StockMovement` |
+| Purchase received | For each purchase item, stock is increased and a purchase movement is created | `Purchase`, `PurchaseItem`, `Product`, `StockMovement` |
+| Invoice cancelled | Stock is returned using `RETURN_IN` stock movements | `Invoice`, `Product`, `StockMovement` |
+| Purchase cancelled | Stock is reversed using `RETURN_OUT` stock movements | `Purchase`, `Product`, `StockMovement` |
+
+### 28.5 Statement-Level Triggers
+
+A statement-level trigger runs once for the whole SQL statement, not once per row.
+
+Example:
+
+```sql
+FOR EACH STATEMENT
+```
+
+If one SQL statement updates 100 rows, a statement-level trigger runs only once.
+
+ShopIQ does not use physical statement-level triggers. The closest application-level equivalent is when one completed operation creates a single activity log.
+
+Examples:
+
+| Completed Operation | Statement-Level Equivalent |
+| --- | --- |
+| Product added | One `ActivityLog` row: `PRODUCT_CREATED` |
+| Invoice created | One `ActivityLog` row: `INVOICE_CREATED` |
+| Payment recorded | One `ActivityLog` row: `PAYMENT_RECORDED` |
+| Purchase received | One `ActivityLog` row: `PURCHASE_CREATED` |
+| Staff member added | One `ActivityLog` row: `STAFF_CREATED` |
+| Shop settings updated | One `ActivityLog` row: `SHOP_UPDATED` |
+
+This gives ShopIQ a clear audit trail without requiring a database trigger.
+
+### 28.6 BEFORE Triggers
+
+A `BEFORE` trigger runs before the database accepts the change.
+
+It is commonly used for:
+
+- validation
+- cleaning values
+- blocking invalid writes
+- setting calculated fields
+- checking business rules
+
+ShopIQ implements `BEFORE` trigger behavior in API validation and permission checks.
+
+Examples:
+
+| ShopIQ Area | BEFORE-Style Check |
+| --- | --- |
+| Authentication | User must be logged in before protected data is loaded |
+| Role permissions | `Admin`, `Manager`, and `Staff` permissions are checked before CRUD actions |
+| Product create/edit | Zod validates name, price, stock, SKU, dates, category, and supplier fields |
+| Invoice create | Stock availability is checked before invoice rows are inserted |
+| Invoice create | Customer must belong to the same shop before linking |
+| Purchase create | Supplier must belong to the same shop before linking |
+| Payment create | Payment must be linked to a valid customer, invoice, supplier, or purchase |
+| Supplier payment | Staff cannot record supplier payouts if their role is not allowed |
+| AI write actions | AI must prepare the action and ask for user confirmation before committing the write |
+
+So when explaining to an instructor:
+
+> ShopIQ's BEFORE-trigger behavior happens before Prisma writes to PostgreSQL. It is implemented with Zod schemas, permission checks, shop ownership checks, and business rule validation.
+
+### 28.7 AFTER Triggers
+
+An `AFTER` trigger runs after the database change succeeds.
+
+It is commonly used for:
+
+- audit logs
+- stock updates
+- balance updates
+- notification records
+- history tables
+
+ShopIQ implements `AFTER` trigger behavior explicitly inside Prisma transactions.
+
+Examples:
+
+| ShopIQ Event | AFTER-Style Side Effect |
+| --- | --- |
+| Product is created | Create `OPENING` stock movement if starting stock is greater than zero |
+| Product stock is edited | Create `ADJUSTMENT` stock movement |
+| Invoice is created | Decrease product stock |
+| Invoice is created | Create `SALE` stock movement rows |
+| Invoice has unpaid amount | Increase customer balance |
+| Payment is recorded | Update invoice paid/due amount |
+| Customer payment is recorded | Decrease customer balance |
+| Supplier payment is recorded | Decrease supplier balance |
+| Purchase is received | Increase product stock |
+| Purchase has unpaid amount | Increase supplier balance |
+| Any important write succeeds | Create an `ActivityLog` row |
+
+This is why ShopIQ can show accurate:
+
+- stock history
+- low stock products
+- customer dues
+- supplier payables
+- dashboard totals
+- reports
+- AI assistant summaries
+
+### 28.8 SELECT Triggers
+
+In PostgreSQL, normal table triggers do not run on `SELECT`.
+
+This is an important DBMS point:
+
+> PostgreSQL supports triggers for `INSERT`, `UPDATE`, `DELETE`, and `TRUNCATE`, but not normal `SELECT` triggers on tables.
+
+So there is no real `SELECT trigger` in ShopIQ.
+
+Read operations in ShopIQ are handled through Prisma `findMany`, `findFirst`, `findUnique`, `aggregate`, and related queries.
+
+Examples:
+
+| ShopIQ Read Area | SELECT-Style Purpose |
+| --- | --- |
+| Dashboard | Reads products, invoices, payments, purchases, stock movements, and logs |
+| Reports | Reads grouped sales, revenue, stock, customer dues, and supplier balances |
+| Product module | Reads product list with category and supplier |
+| Customer module | Reads customers with invoices and payments |
+| Supplier module | Reads suppliers with purchases and payments |
+| AI assistant | Reads current business context before answering questions |
+
+If a database ever needs `SELECT`-like side effects, PostgreSQL usually solves that with other tools, such as:
+
+- views
+- materialized views
+- row-level security policies
+- query logging
+- application logs
+- audit extensions
+
+But ShopIQ currently does not need a physical `SELECT` trigger.
+
+### 28.9 Actual ShopIQ Trigger-Like Workflow Examples
+
+#### Invoice Creation
+
+When an invoice is created:
+
+1. The app checks the user's role.
+2. The app validates invoice fields with Zod.
+3. The app checks that selected products exist in the same shop.
+4. The app checks available stock before writing.
+5. Prisma starts a transaction.
+6. The invoice row is inserted.
+7. Invoice item rows are inserted.
+8. Product stock is decreased.
+9. `SALE` stock movement rows are inserted.
+10. Customer balance is increased if there is a due amount.
+11. An activity log is inserted.
+
+Database-trigger equivalent:
+
+```text
+BEFORE INSERT Invoice:
+  validate stock and customer
+
+AFTER INSERT InvoiceItem:
+  reduce Product.stockQty
+  insert StockMovement
+
+AFTER INSERT Invoice:
+  update Customer.balance
+  insert ActivityLog
+```
+
+ShopIQ performs this inside the invoice API route with Prisma transactions.
+
+#### Purchase Receiving
+
+When a purchase is received:
+
+1. The app checks the user's role.
+2. The app validates purchase fields.
+3. The app checks that products and supplier belong to the same shop.
+4. Prisma starts a transaction.
+5. The purchase row is inserted.
+6. Purchase item rows are inserted.
+7. Product stock is increased.
+8. Product cost price is updated.
+9. `PURCHASE` stock movement rows are inserted.
+10. Supplier balance is increased if the purchase has due amount.
+11. An activity log is inserted.
+
+Database-trigger equivalent:
+
+```text
+AFTER INSERT PurchaseItem:
+  increase Product.stockQty
+  insert StockMovement
+
+AFTER INSERT Purchase:
+  update Supplier.balance
+  insert ActivityLog
+```
+
+#### Payment Recording
+
+When a payment is recorded:
+
+1. The app checks the user's role.
+2. The app validates amount, method, direction, and links.
+3. The app checks whether the payment is customer-side or supplier-side.
+4. Prisma starts a transaction.
+5. The payment row is inserted.
+6. Invoice or purchase paid amount is updated.
+7. Invoice or purchase due amount is recalculated.
+8. Customer or supplier balance is updated.
+9. An activity log is inserted.
+
+Database-trigger equivalent:
+
+```text
+AFTER INSERT Payment:
+  update Invoice or Purchase paid/due amount
+  update Customer or Supplier balance
+  insert ActivityLog
+```
+
+### 28.10 Difference Between Database Triggers And ShopIQ's Current Design
+
+| Topic | Physical PostgreSQL Trigger | ShopIQ Current Design |
+| --- | --- | --- |
+| Where logic lives | Inside PostgreSQL | In TypeScript API routes and Prisma transactions |
+| Runs automatically | Yes, inside database | Yes, when the API workflow runs |
+| Easy to see from app code | No, can be hidden | Yes, visible in route handlers |
+| Role-based checks | Harder | Easier before transaction |
+| Form validation | Harder | Easier with Zod |
+| Error messages | Often database-level | Clean API responses |
+| Atomic updates | Yes | Yes, through `prisma.$transaction` |
+| Best for this project | Optional | Current chosen approach |
+
+### 28.11 Could ShopIQ Add Real Database Triggers Later?
+
+Yes. ShopIQ could add physical PostgreSQL triggers later if the project required database-enforced automation independent of the application server.
+
+Good future candidates would be:
+
+- automatic `updatedAt` updates
+- immutable audit history
+- automatic balance recalculation
+- automatic stock movement insertion
+- preventing negative stock at database level
+- enforcing stronger cross-table accounting rules
+
+Example future trigger idea:
+
+```sql
+CREATE FUNCTION prevent_negative_stock()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW."stockQty" < 0 THEN
+    RAISE EXCEPTION 'Product stock cannot be negative';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER product_no_negative_stock
+BEFORE UPDATE OF "stockQty" ON "Product"
+FOR EACH ROW
+EXECUTE FUNCTION prevent_negative_stock();
+```
+
+This is not currently part of the ShopIQ schema, but it is a valid future enhancement.
+
+### 28.12 Final Trigger Explanation For Instructor
+
+Use this paragraph in presentation:
+
+> ShopIQ currently does not use physical PostgreSQL triggers. There are no `CREATE TRIGGER` definitions in the current Prisma migrations. Instead, the project implements trigger-like behavior using Prisma transactions in the application layer. Before a write happens, ShopIQ checks role permissions, validates data through Zod, verifies shop ownership, and checks business rules such as stock availability. After a successful write, the same transaction updates related tables such as `Product`, `StockMovement`, `Customer`, `Supplier`, `Payment`, and `ActivityLog`. For example, creating an invoice automatically reduces stock, creates sale stock movements, updates customer dues, and logs the activity. PostgreSQL does not support normal `SELECT` triggers, so read operations such as dashboard reports and AI assistant summaries are handled with Prisma `SELECT` queries instead.
+
+One simple sentence:
+
+> ShopIQ uses application-level trigger logic through Prisma transactions instead of physical database triggers.
