@@ -5266,12 +5266,12 @@ html[data-ui-mode="glass"] .crud-card {
 @keyframes modal-origin-in {
   0% {
     opacity: 0;
-    filter: blur(7px);
+    filter: blur(2.4px);
     transform: translate3d(var(--modal-dx, 0px), var(--modal-dy, 18px), 0) scale(var(--modal-origin-scale, 0.96));
   }
   28% {
     opacity: 0.72;
-    filter: blur(3px);
+    filter: blur(1px);
     transform: translate3d(calc(var(--modal-dx, 0px) * 0.32), calc(var(--modal-dy, 18px) * 0.28 - 7px), 0) scale(0.88);
   }
   52% {
@@ -5309,22 +5309,22 @@ html[data-ui-mode="glass"] .crud-card {
   }
   34% {
     opacity: 0.94;
-    filter: blur(0.5px);
+    filter: blur(0.2px);
     transform: translate3d(calc(var(--modal-dx, 0px) * 0.08), calc(var(--modal-dy, 18px) * 0.06 + 10px), 0) scale(0.94);
   }
   56% {
     opacity: 0.78;
-    filter: blur(2px);
+    filter: blur(0.8px);
     transform: translate3d(calc(var(--modal-dx, 0px) * 0.34), calc(var(--modal-dy, 18px) * 0.28 + 7px), 0) scale(0.74);
   }
   78% {
     opacity: 0.36;
-    filter: blur(5px);
+    filter: blur(1.6px);
     transform: translate3d(calc(var(--modal-dx, 0px) * 0.72), calc(var(--modal-dy, 18px) * 0.68 + 2px), 0) scale(calc(var(--modal-origin-scale, 0.96) + 0.1));
   }
   100% {
     opacity: 0;
-    filter: blur(7px);
+    filter: blur(2.4px);
     transform: translate3d(var(--modal-dx, 0px), var(--modal-dy, 18px), 0) scale(var(--modal-origin-scale, 0.96));
   }
 }
