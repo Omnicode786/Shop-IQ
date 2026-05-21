@@ -24,7 +24,7 @@ export default async function AssistantPage() {
         }
       />
 
-      <div className="mt-6">
+      <div className="mt-6 grid gap-4">
         <AssistantConsole />
       </div>
     </>

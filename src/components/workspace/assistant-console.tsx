@@ -36,6 +36,7 @@ type ChatThread = {
 };
 
 const USER_MESSAGE_LAND_MS = 440;
+const AI_REQUEST_TIMEOUT_MS = 55_000;
 
 function actionLabel(type?: string) {
   if (type === "create_product") return "Product preview";
@@ -63,6 +64,27 @@ function shortPreview(value?: string) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (!text) return "No messages yet";
   return text.length > 92 ? `${text.slice(0, 89).trim()}...` : text;
+}
+
+function assistantUnavailableMessage(error: unknown) {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "## Assistant not responding\n\nThe AI service did not respond in time. I stopped waiting so you are not stuck here. Please try again in a moment.";
+  }
+  const message = error instanceof Error ? error.message : "";
+  return `## Assistant unavailable\n\n${message || "The AI service is not working right now."}`;
+}
+
+async function fetchAssistantJson(input: RequestInfo | URL, init?: RequestInit, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Assistant request failed.");
+    return data;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export function AssistantConsole({ initialThreadId }: { initialThreadId?: string }) {
@@ -531,16 +553,12 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
     scrollToMessage(userMessageId, "auto");
     setQuestion("");
     try {
-      const responsePromise = fetch("/api/ai/chat", {
+      const responsePromise = fetchAssistantJson("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ threadId, question: finalQuestion, clientMessages })
-      })
-        .then(async (response) => {
-          const data = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(data.error || "Assistant request failed.");
-          return { ok: true as const, data };
-        })
+      }, AI_REQUEST_TIMEOUT_MS)
+        .then((data) => ({ ok: true as const, data }))
         .catch((error) => ({ ok: false as const, error }));
       await waitForUserMessageLanding();
       setShowThinking(true);
@@ -558,10 +576,11 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
         previewAction: data.previewAction || null
       });
       router.refresh();
-    } catch {
+    } catch (error) {
       setShowThinking(false);
-      toast.error("The assistant could not complete that request right now.");
-      typeAiMessage({ content: "## Assistant unavailable\n\nI could not complete that request right now. Please try again." });
+      setMessages((current) => current.filter((message) => message.id !== userMessageId));
+      toast.error("The AI assistant is not working right now.");
+      typeAiMessage({ content: assistantUnavailableMessage(error) });
     } finally {
       setLoading(false);
     }
@@ -580,7 +599,7 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
     setMessages((current) => [...current, { id: userMessageId, role: "USER", content: userText }]);
     scrollToMessage(userMessageId, "auto");
     try {
-      const responsePromise = fetch("/api/ai/chat", {
+      const responsePromise = fetchAssistantJson("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -589,12 +608,8 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
           clientMessages,
           approval: { decision, previewId: previewAction.previewId }
         })
-      })
-        .then(async (response) => {
-          const data = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(data.error || "Assistant approval failed.");
-          return { ok: true as const, data };
-        })
+      }, AI_REQUEST_TIMEOUT_MS)
+        .then((data) => ({ ok: true as const, data }))
         .catch((error) => ({ ok: false as const, error }));
       await waitForUserMessageLanding();
       setShowThinking(true);
@@ -613,10 +628,11 @@ export function AssistantConsole({ initialThreadId }: { initialThreadId?: string
         previewAction: data.previewAction || null
       });
       router.refresh();
-    } catch {
+    } catch (error) {
       setShowThinking(false);
-      toast.error("The assistant could not complete that approval request right now.");
-      typeAiMessage({ content: "## Assistant unavailable\n\nI could not complete that approval request right now. Please try again." });
+      setMessages((current) => current.filter((message) => message.id !== userMessageId));
+      toast.error("The AI assistant is not working right now.");
+      typeAiMessage({ content: assistantUnavailableMessage(error) });
     } finally {
       setLoading(false);
     }

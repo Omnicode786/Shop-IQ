@@ -10,6 +10,7 @@ import {
   runShopIqAgentTurn,
   type PendingAiActionMetadata
 } from "@/lib/ai/shopiq-agent";
+import { isGeminiKeyError, isGeminiQuotaError } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
 import { can, isManagerOrAdmin } from "@/lib/permissions";
 
@@ -34,6 +35,39 @@ function assistantThreadWhere(user: { id: string; shopId: string; role: string }
 
 function geminiConfigError(error: unknown) {
   return error instanceof Error && error.message.includes("GEMINI_API_KEY");
+}
+
+function aiRequestTimeoutMs() {
+  const parsed = Number(process.env.AI_REQUEST_TIMEOUT_MS || 55_000);
+  if (!Number.isFinite(parsed)) return 55_000;
+  return Math.min(Math.max(Math.floor(parsed), 10_000), 180_000);
+}
+
+function withAiTimeout<T>(promise: Promise<T>) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("The AI service did not respond in time. Please try again in a moment."));
+    }, aiRequestTimeoutMs());
+
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+async function cleanupFailedTurn(createdThreadId: string | null, createdMessageIds: string[]) {
+  try {
+    if (createdThreadId) {
+      await prisma.assistantThread.delete({ where: { id: createdThreadId } });
+      return;
+    }
+    if (createdMessageIds.length) {
+      await prisma.assistantMessage.deleteMany({ where: { id: { in: createdMessageIds } } });
+    }
+  } catch (cleanupError) {
+    console.warn("[ShopIQ AI] Failed to clean up an incomplete assistant turn.", cleanupError);
+  }
 }
 
 function clientConversationHistory(body: unknown) {
@@ -231,6 +265,10 @@ export async function DELETE(request: Request) {
 }
 
 export async function POST(request: Request) {
+  let createdThreadId: string | null = null;
+  const createdMessageIds: string[] = [];
+  let shouldCleanupIncompleteTurn = true;
+
   try {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
@@ -252,6 +290,7 @@ export async function POST(request: Request) {
           mode: "GEMINI_AGENT"
         }
       });
+      createdThreadId = thread.id;
     }
 
     const recentBefore = await prisma.assistantMessage.findMany({
@@ -260,9 +299,10 @@ export async function POST(request: Request) {
       take: 8
     });
 
-    await prisma.assistantMessage.create({
+    const userMessage = await prisma.assistantMessage.create({
       data: { threadId: thread.id, authorId: user.id, role: "USER", content: text }
     });
+    createdMessageIds.push(userMessage.id);
 
     if (approvalDecision === "cancel" || (!approvalDecision && isAiCancel(text))) {
       const pending = await findLatestPendingAiAction(thread.id);
@@ -270,8 +310,11 @@ export async function POST(request: Request) {
         const metadata = pending.metadata as PendingAiActionMetadata;
         if (approvalPreviewId && metadata.previewId !== approvalPreviewId) {
           const answer = "## Preview Changed\n\nThat approval request no longer matches the latest pending action. Please review the newest preview before cancelling it.";
-          await prisma.assistantMessage.create({ data: { threadId: thread.id, role: "AI", content: answer } });
-          return jsonWithThread(thread.id, { answer });
+          const aiMessage = await prisma.assistantMessage.create({ data: { threadId: thread.id, role: "AI", content: answer } });
+          createdMessageIds.push(aiMessage.id);
+          const response = await jsonWithThread(thread.id, { answer });
+          shouldCleanupIncompleteTurn = false;
+          return response;
         }
         await prisma.assistantMessage.update({
           where: { id: pending.id },
@@ -279,30 +322,39 @@ export async function POST(request: Request) {
         });
       }
       const answer = "## Preview Cancelled\n\nNo database record was changed. Ask me to prepare another ShopIQ action whenever you are ready.";
-      await prisma.assistantMessage.create({ data: { threadId: thread.id, role: "AI", content: answer } });
-      return jsonWithThread(thread.id, { answer });
+      const aiMessage = await prisma.assistantMessage.create({ data: { threadId: thread.id, role: "AI", content: answer } });
+      createdMessageIds.push(aiMessage.id);
+      const response = await jsonWithThread(thread.id, { answer });
+      shouldCleanupIncompleteTurn = false;
+      return response;
     }
 
     if (approvalDecision === "approve" || (!approvalDecision && isAiConfirm(text))) {
       const pending = await findLatestPendingAiAction(thread.id);
       if (!pending) {
         const answer = "## Nothing Pending\n\nI do not have a pending ShopIQ action to confirm. Ask me to prepare an action first, and I will show a validated preview before anything is written.";
-        await prisma.assistantMessage.create({ data: { threadId: thread.id, role: "AI", content: answer } });
-        return jsonWithThread(thread.id, { answer });
+        const aiMessage = await prisma.assistantMessage.create({ data: { threadId: thread.id, role: "AI", content: answer } });
+        createdMessageIds.push(aiMessage.id);
+        const response = await jsonWithThread(thread.id, { answer });
+        shouldCleanupIncompleteTurn = false;
+        return response;
       }
 
       const metadata = pending.metadata as PendingAiActionMetadata;
       if (approvalPreviewId && metadata.previewId !== approvalPreviewId) {
         const answer = "## Preview Changed\n\nThat approval request no longer matches the latest pending action. Please review the newest preview before approving it.";
-        await prisma.assistantMessage.create({ data: { threadId: thread.id, role: "AI", content: answer } });
-        return jsonWithThread(thread.id, { answer });
+        const aiMessage = await prisma.assistantMessage.create({ data: { threadId: thread.id, role: "AI", content: answer } });
+        createdMessageIds.push(aiMessage.id);
+        const response = await jsonWithThread(thread.id, { answer });
+        shouldCleanupIncompleteTurn = false;
+        return response;
       }
       const result = await executePendingAiAction(user, metadata.pendingAction!, metadata.payload || {});
       await prisma.assistantMessage.update({
         where: { id: pending.id },
         data: { metadata: { ...metadata, status: "executed", executedAt: new Date().toISOString() } as Prisma.InputJsonValue }
       });
-      await prisma.assistantMessage.create({
+      const aiMessage = await prisma.assistantMessage.create({
         data: {
           threadId: thread.id,
           role: "AI",
@@ -310,16 +362,19 @@ export async function POST(request: Request) {
           metadata: result.action ? ({ action: result.action } as Prisma.InputJsonValue) : undefined
         }
       });
-      return jsonWithThread(thread.id, { answer: result.answer, action: result.action });
+      createdMessageIds.push(aiMessage.id);
+      const response = await jsonWithThread(thread.id, { answer: result.answer, action: result.action });
+      shouldCleanupIncompleteTurn = false;
+      return response;
     }
 
     const persistedHistory = recentBefore.reverse().map((message) => ({ role: message.role, content: message.content }));
     const visibleHistory = clientConversationHistory(body);
-    const result = await runShopIqAgentTurn({
+    const result = await withAiTimeout(runShopIqAgentTurn({
       user,
       question: text,
       recentMessages: visibleHistory.length ? visibleHistory : persistedHistory
-    });
+    }));
 
     const metadata: PendingAiActionMetadata = {
       provider: result.provider,
@@ -335,15 +390,32 @@ export async function POST(request: Request) {
     }
     if (result.action) metadata.action = result.action;
 
-    await prisma.assistantMessage.create({
+    const aiMessage = await prisma.assistantMessage.create({
       data: { threadId: thread.id, role: "AI", content: result.answer, metadata: metadata as Prisma.InputJsonValue }
     });
+    createdMessageIds.push(aiMessage.id);
 
-    return jsonWithThread(thread.id, { answer: result.answer, previewAction: result.pendingAction, action: result.action });
+    const response = await jsonWithThread(thread.id, { answer: result.answer, previewAction: result.pendingAction, action: result.action });
+    shouldCleanupIncompleteTurn = false;
+    return response;
   } catch (error) {
+    if (shouldCleanupIncompleteTurn) await cleanupFailedTurn(createdThreadId, createdMessageIds);
+
     if (geminiConfigError(error)) {
       return NextResponse.json(
-        { error: "Gemini is not configured. Add GEMINI_API_KEY to .env and restart the server. No mock AI fallback is enabled." },
+        { error: "Gemini is not configured. Add GEMINI_API_KEY or GEMINI_API_KEYS to .env and restart the server. No mock AI fallback is enabled." },
+        { status: 503 }
+      );
+    }
+    if (isGeminiQuotaError(error)) {
+      return NextResponse.json(
+        { error: "Gemini quota is temporarily exhausted for the configured provider keys. Please try again after cooldown, reduce request volume, or increase your Gemini quota/paid tier." },
+        { status: 429 }
+      );
+    }
+    if (isGeminiKeyError(error)) {
+      return NextResponse.json(
+        { error: "Gemini rejected all configured API keys. Check GEMINI_API_KEYS formatting, remove invalid keys, rotate exposed keys, and restart the server." },
         { status: 503 }
       );
     }

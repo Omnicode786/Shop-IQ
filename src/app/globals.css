@@ -6432,7 +6432,300 @@ html[data-ui-mode="glass"] .dashboard-v2-activity {
 }
 
 .dashboard-v2-metrics .metric-card {
+  --dashboard-metric-start: hsl(224 64% 16%);
+  --dashboard-metric-mid: hsl(226 64% 32%);
+  --dashboard-metric-end: hsl(252 72% 48%);
+  --dashboard-metric-glow: hsl(212 100% 67%);
+  --dashboard-metric-shadow: 224 64% 22%;
+  --dashboard-metric-text: hsl(0 0% 100%);
+  --dashboard-metric-muted: hsl(0 0% 100% / 0.74);
   min-height: 6.25rem !important;
+  border-color: color-mix(in srgb, var(--dashboard-metric-glow) 42%, hsl(0 0% 100% / 0.24)) !important;
+  background:
+    radial-gradient(circle at 88% 0%, color-mix(in srgb, var(--dashboard-metric-glow) 48%, transparent), transparent 32%),
+    radial-gradient(circle at -8% 110%, color-mix(in srgb, var(--dashboard-metric-end) 38%, transparent), transparent 42%),
+    linear-gradient(135deg, var(--dashboard-metric-start) 0%, var(--dashboard-metric-mid) 52%, var(--dashboard-metric-end) 100%) !important;
+  color: var(--dashboard-metric-text) !important;
+  box-shadow:
+    0 18px 42px hsl(var(--dashboard-metric-shadow) / 0.26),
+    inset 0 1px 0 hsl(0 0% 100% / 0.28);
+}
+
+.dashboard-v2-metrics .metric-card::before {
+  background:
+    linear-gradient(90deg, hsl(0 0% 100% / 0.25), hsl(0 0% 100% / 0.06));
+  opacity: 0.46 !important;
+}
+
+.dashboard-v2-metrics .metric-card .metric-muted {
+  color: var(--dashboard-metric-muted) !important;
+  opacity: 1;
+}
+
+.dashboard-v2-metrics .metric-card .metric-icon {
+  border-color: hsl(0 0% 100% / 0.24) !important;
+  background:
+    linear-gradient(135deg, hsl(0 0% 100% / 0.24), hsl(0 0% 100% / 0.09)) !important;
+  color: var(--dashboard-metric-text) !important;
+  box-shadow:
+    0 12px 26px hsl(var(--dashboard-metric-shadow) / 0.18),
+    inset 0 1px 0 hsl(0 0% 100% / 0.3);
+}
+
+.dashboard-v2-metrics .metric-card[data-tone="primary"] {
+  --dashboard-metric-start: hsl(224 64% 16%);
+  --dashboard-metric-mid: hsl(226 64% 32%);
+  --dashboard-metric-end: hsl(252 72% 48%);
+  --dashboard-metric-glow: hsl(212 100% 67%);
+  --dashboard-metric-shadow: 224 64% 22%;
+}
+
+.dashboard-v2-metrics .metric-card[data-tone="emerald"] {
+  --dashboard-metric-start: hsl(166 72% 20%);
+  --dashboard-metric-mid: hsl(160 84% 32%);
+  --dashboard-metric-end: hsl(108 58% 43%);
+  --dashboard-metric-glow: hsl(155 86% 60%);
+  --dashboard-metric-shadow: 166 76% 22%;
+}
+
+.dashboard-v2-metrics .metric-card[data-tone="amber"] {
+  --dashboard-metric-start: hsl(24 92% 34%);
+  --dashboard-metric-mid: hsl(33 94% 48%);
+  --dashboard-metric-end: hsl(45 95% 58%);
+  --dashboard-metric-glow: hsl(38 100% 68%);
+  --dashboard-metric-shadow: 28 92% 34%;
+}
+
+.dashboard-v2-metrics .metric-card[data-tone="violet"] {
+  --dashboard-metric-start: hsl(260 60% 26%);
+  --dashboard-metric-mid: hsl(272 70% 45%);
+  --dashboard-metric-end: hsl(312 65% 50%);
+  --dashboard-metric-glow: hsl(280 95% 72%);
+  --dashboard-metric-shadow: 267 70% 30%;
+}
+
+.dashboard-v2-metrics .metric-card[data-tone="rose"] {
+  --dashboard-metric-start: hsl(338 64% 26%);
+  --dashboard-metric-mid: hsl(350 76% 42%);
+  --dashboard-metric-end: hsl(14 76% 48%);
+  --dashboard-metric-glow: hsl(343 92% 68%);
+  --dashboard-metric-shadow: 345 70% 30%;
+}
+
+html.dark .dashboard-v2-metrics .metric-card {
+  border-color: color-mix(in srgb, var(--dashboard-metric-glow) 46%, hsl(0 0% 100% / 0.16)) !important;
+  box-shadow:
+    0 20px 46px hsl(var(--dashboard-metric-shadow) / 0.34),
+    inset 0 1px 0 hsl(0 0% 100% / 0.18);
+}
+
+html.dark .dashboard-v2-metrics .metric-card .metric-icon {
+  border-color: hsl(0 0% 100% / 0.2) !important;
+  background:
+    linear-gradient(135deg, hsl(0 0% 100% / 0.18), hsl(0 0% 100% / 0.07)) !important;
+}
+
+html[data-ui-mode="glass"] .dashboard-v2-metrics .metric-card {
+  border-color: color-mix(in srgb, var(--dashboard-metric-glow) 48%, hsl(0 0% 100% / 0.3)) !important;
+  background:
+    radial-gradient(circle at 88% 0%, color-mix(in srgb, var(--dashboard-metric-glow) 48%, transparent), transparent 32%),
+    radial-gradient(circle at 0% 110%, color-mix(in srgb, var(--dashboard-metric-end) 42%, transparent), transparent 44%),
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--dashboard-metric-start) 92%, hsl(0 0% 100% / 0.08)) 0%,
+      color-mix(in srgb, var(--dashboard-metric-mid) 92%, hsl(0 0% 100% / 0.08)) 52%,
+      color-mix(in srgb, var(--dashboard-metric-end) 92%, hsl(0 0% 100% / 0.08)) 100%) !important;
+  backdrop-filter: blur(18px) saturate(1.18);
+  -webkit-backdrop-filter: blur(18px) saturate(1.18);
+  box-shadow:
+    0 20px 46px hsl(var(--dashboard-metric-shadow) / 0.3),
+    inset 0 1px 0 hsl(0 0% 100% / 0.34),
+    inset 0 -1px 0 hsl(0 0% 100% / 0.08);
+}
+
+html.dark[data-ui-mode="glass"] .dashboard-v2-metrics .metric-card {
+  border-color: color-mix(in srgb, var(--dashboard-metric-glow) 44%, hsl(0 0% 100% / 0.18)) !important;
+  box-shadow:
+    0 22px 52px hsl(var(--dashboard-metric-shadow) / 0.38),
+    inset 0 1px 0 hsl(0 0% 100% / 0.22),
+    inset 0 -1px 0 hsl(0 0% 100% / 0.06);
+}
+
+html[data-shadcn-theme="tweakcn-claude"] .dashboard-v2-metrics .metric-card[data-tone="primary"] {
+  --dashboard-metric-start: hsl(24 72% 18%);
+  --dashboard-metric-mid: hsl(25 86% 38%);
+  --dashboard-metric-end: hsl(37 90% 54%);
+  --dashboard-metric-glow: hsl(38 96% 66%);
+  --dashboard-metric-shadow: 25 72% 26%;
+}
+
+html[data-shadcn-theme="tweakcn-claude"] .dashboard-v2-metrics .metric-card[data-tone="emerald"] {
+  --dashboard-metric-start: hsl(101 43% 22%);
+  --dashboard-metric-mid: hsl(88 45% 38%);
+  --dashboard-metric-end: hsl(55 74% 50%);
+  --dashboard-metric-glow: hsl(75 78% 60%);
+  --dashboard-metric-shadow: 92 48% 24%;
+}
+
+html[data-shadcn-theme="tweakcn-claude"] .dashboard-v2-metrics .metric-card[data-tone="amber"] {
+  --dashboard-metric-start: hsl(17 82% 32%);
+  --dashboard-metric-mid: hsl(28 96% 48%);
+  --dashboard-metric-end: hsl(44 96% 58%);
+  --dashboard-metric-glow: hsl(35 100% 66%);
+  --dashboard-metric-shadow: 22 82% 32%;
+}
+
+html[data-shadcn-theme="tweakcn-claude"] .dashboard-v2-metrics .metric-card[data-tone="violet"] {
+  --dashboard-metric-start: hsl(318 50% 28%);
+  --dashboard-metric-mid: hsl(330 66% 45%);
+  --dashboard-metric-end: hsl(19 70% 54%);
+  --dashboard-metric-glow: hsl(330 82% 68%);
+  --dashboard-metric-shadow: 326 56% 30%;
+}
+
+html[data-shadcn-theme="tweakcn-claude"] .dashboard-v2-metrics .metric-card[data-tone="rose"] {
+  --dashboard-metric-start: hsl(355 62% 30%);
+  --dashboard-metric-mid: hsl(4 74% 44%);
+  --dashboard-metric-end: hsl(26 72% 50%);
+  --dashboard-metric-glow: hsl(5 92% 66%);
+  --dashboard-metric-shadow: 2 70% 30%;
+}
+
+html[data-shadcn-theme="tweakcn-supabase"] .dashboard-v2-metrics .metric-card[data-tone="primary"] {
+  --dashboard-metric-start: hsl(174 76% 20%);
+  --dashboard-metric-mid: hsl(190 82% 36%);
+  --dashboard-metric-end: hsl(216 74% 46%);
+  --dashboard-metric-glow: hsl(187 94% 62%);
+  --dashboard-metric-shadow: 184 72% 24%;
+}
+
+html[data-shadcn-theme="tweakcn-supabase"] .dashboard-v2-metrics .metric-card[data-tone="emerald"] {
+  --dashboard-metric-start: hsl(154 68% 21%);
+  --dashboard-metric-mid: hsl(153 72% 36%);
+  --dashboard-metric-end: hsl(126 58% 43%);
+  --dashboard-metric-glow: hsl(153 78% 58%);
+  --dashboard-metric-shadow: 154 72% 22%;
+}
+
+html[data-shadcn-theme="tweakcn-supabase"] .dashboard-v2-metrics .metric-card[data-tone="amber"] {
+  --dashboard-metric-start: hsl(44 90% 34%);
+  --dashboard-metric-mid: hsl(47 95% 48%);
+  --dashboard-metric-end: hsl(32 92% 52%);
+  --dashboard-metric-glow: hsl(48 100% 66%);
+  --dashboard-metric-shadow: 42 88% 30%;
+}
+
+html[data-shadcn-theme="tweakcn-supabase"] .dashboard-v2-metrics .metric-card[data-tone="violet"] {
+  --dashboard-metric-start: hsl(252 62% 34%);
+  --dashboard-metric-mid: hsl(264 72% 50%);
+  --dashboard-metric-end: hsl(194 74% 47%);
+  --dashboard-metric-glow: hsl(198 94% 66%);
+  --dashboard-metric-shadow: 254 70% 30%;
+}
+
+html[data-shadcn-theme="tweakcn-supabase"] .dashboard-v2-metrics .metric-card[data-tone="rose"] {
+  --dashboard-metric-start: hsl(347 68% 30%);
+  --dashboard-metric-mid: hsl(0 72% 48%);
+  --dashboard-metric-end: hsl(22 86% 52%);
+  --dashboard-metric-glow: hsl(0 90% 66%);
+  --dashboard-metric-shadow: 350 72% 30%;
+}
+
+html[data-shadcn-theme="tweakcn-claymorphism"] .dashboard-v2-metrics .metric-card[data-tone="primary"] {
+  --dashboard-metric-start: hsl(250 58% 31%);
+  --dashboard-metric-mid: hsl(264 78% 58%);
+  --dashboard-metric-end: hsl(292 70% 60%);
+  --dashboard-metric-glow: hsl(268 96% 74%);
+  --dashboard-metric-shadow: 262 66% 34%;
+}
+
+html[data-shadcn-theme="tweakcn-claymorphism"] .dashboard-v2-metrics .metric-card[data-tone="emerald"] {
+  --dashboard-metric-start: hsl(164 58% 28%);
+  --dashboard-metric-mid: hsl(153 64% 42%);
+  --dashboard-metric-end: hsl(188 70% 45%);
+  --dashboard-metric-glow: hsl(166 80% 64%);
+  --dashboard-metric-shadow: 164 62% 30%;
+}
+
+html[data-shadcn-theme="tweakcn-claymorphism"] .dashboard-v2-metrics .metric-card[data-tone="amber"] {
+  --dashboard-metric-start: hsl(32 84% 38%);
+  --dashboard-metric-mid: hsl(47 92% 52%);
+  --dashboard-metric-end: hsl(326 70% 60%);
+  --dashboard-metric-glow: hsl(46 100% 70%);
+  --dashboard-metric-shadow: 32 84% 34%;
+}
+
+html[data-shadcn-theme="tweakcn-claymorphism"] .dashboard-v2-metrics .metric-card[data-tone="violet"] {
+  --dashboard-metric-start: hsl(282 70% 36%);
+  --dashboard-metric-mid: hsl(309 74% 55%);
+  --dashboard-metric-end: hsl(333 78% 63%);
+  --dashboard-metric-glow: hsl(309 92% 74%);
+  --dashboard-metric-shadow: 296 72% 34%;
+}
+
+html[data-shadcn-theme="tweakcn-claymorphism"] .dashboard-v2-metrics .metric-card[data-tone="rose"] {
+  --dashboard-metric-start: hsl(338 66% 32%);
+  --dashboard-metric-mid: hsl(352 76% 50%);
+  --dashboard-metric-end: hsl(20 84% 58%);
+  --dashboard-metric-glow: hsl(352 92% 70%);
+  --dashboard-metric-shadow: 344 74% 34%;
+}
+
+html[data-shadcn-theme="tweakcn-brutalist"] .dashboard-v2-metrics .metric-card {
+  --dashboard-metric-text: hsl(0 0% 4%);
+  --dashboard-metric-muted: hsl(0 0% 4% / 0.72);
+  border-width: 2px;
+  border-color: hsl(0 0% 4%) !important;
+  box-shadow: 5px 5px 0 hsl(var(--foreground));
+}
+
+html[data-shadcn-theme="tweakcn-brutalist"] .dashboard-v2-metrics .metric-card .metric-icon {
+  border-color: hsl(0 0% 4% / 0.22) !important;
+  background: hsl(0 0% 100% / 0.32) !important;
+  color: hsl(0 0% 4%) !important;
+}
+
+html[data-shadcn-theme="tweakcn-brutalist"] .dashboard-v2-metrics .metric-card[data-tone="primary"] {
+  --dashboard-metric-start: hsl(47 100% 51%);
+  --dashboard-metric-mid: hsl(31 100% 55%);
+  --dashboard-metric-end: hsl(197 100% 50%);
+  --dashboard-metric-glow: hsl(197 100% 68%);
+  --dashboard-metric-shadow: 0 0% 4%;
+}
+
+html[data-shadcn-theme="tweakcn-brutalist"] .dashboard-v2-metrics .metric-card[data-tone="emerald"] {
+  --dashboard-metric-start: hsl(153 82% 54%);
+  --dashboard-metric-mid: hsl(197 100% 56%);
+  --dashboard-metric-end: hsl(89 100% 62%);
+  --dashboard-metric-glow: hsl(153 100% 72%);
+  --dashboard-metric-shadow: 0 0% 4%;
+}
+
+html[data-shadcn-theme="tweakcn-brutalist"] .dashboard-v2-metrics .metric-card[data-tone="amber"] {
+  --dashboard-metric-start: hsl(47 100% 54%);
+  --dashboard-metric-mid: hsl(31 100% 58%);
+  --dashboard-metric-end: hsl(0 84% 66%);
+  --dashboard-metric-glow: hsl(47 100% 72%);
+  --dashboard-metric-shadow: 0 0% 4%;
+}
+
+html[data-shadcn-theme="tweakcn-brutalist"] .dashboard-v2-metrics .metric-card[data-tone="violet"] {
+  --dashboard-metric-start: hsl(197 100% 62%);
+  --dashboard-metric-mid: hsl(262 83% 72%);
+  --dashboard-metric-end: hsl(326 80% 72%);
+  --dashboard-metric-glow: hsl(197 100% 76%);
+  --dashboard-metric-shadow: 0 0% 4%;
+}
+
+html[data-shadcn-theme="tweakcn-brutalist"] .dashboard-v2-metrics .metric-card[data-tone="rose"] {
+  --dashboard-metric-start: hsl(0 84% 66%);
+  --dashboard-metric-mid: hsl(326 80% 70%);
+  --dashboard-metric-end: hsl(47 100% 58%);
+  --dashboard-metric-glow: hsl(0 100% 74%);
+  --dashboard-metric-shadow: 0 0% 4%;
+}
+
+html.dark[data-shadcn-theme="tweakcn-brutalist"] .dashboard-v2-metrics .metric-card {
+  box-shadow: 5px 5px 0 hsl(var(--primary));
 }
 
 .dashboard-v2-chart-grid {

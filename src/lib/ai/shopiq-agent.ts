@@ -1796,7 +1796,7 @@ async function buildTaskContext(user: AgentUser, question: string) {
   const snapshot = await getDashboardSnapshot(user.shopId, user.role);
   const lower = question.toLowerCase();
   const context: Record<string, unknown> = {
-    now: new Date().toISOString(),
+    currentHour: new Date().toISOString().slice(0, 13),
     shop: user.shop?.name,
     currency: user.shop?.currency || "PKR",
     role: user.role,
@@ -1828,14 +1828,24 @@ async function buildTaskContext(user: AgentUser, question: string) {
 }
 
 function historyToContents(messages: Array<{ role: string; content: string }>): Content[] {
-  return messages.slice(-8).map((message) => ({
+  return messages.slice(-6).map((message) => ({
     role: message.role === "USER" ? "user" : "model",
-    parts: [{ text: message.content.slice(0, 1800) }]
+    parts: [{ text: message.content.slice(0, 1200) }]
   }));
 }
 
 function isReportRequest(text: string) {
   return /\b(report|pdf|downloadable report|business insight|profit\/loss|profit and loss|stock movement report|sales report|inventory report|customer report|dues report|supplier report)\b/i.test(text);
+}
+
+function isWriteRequest(text: string) {
+  return /\b(create|add|update|edit|record|generate record|make invoice|create invoice|create bill|purchase|adjust|delete|remove|staff member|new product|new customer|new supplier)\b/i.test(text);
+}
+
+function taskClassForQuestion(text: string): "light" | "standard" | "heavy" {
+  if (isReportRequest(text) || isWriteRequest(text) || /\b(deep analysis|forecast|recommendation plan|cashflow risk)\b/i.test(text)) return "heavy";
+  if (/\b(summary|summarize|suggest|find|search|low stock|unpaid|dues|today sales|monthly revenue|how much)\b/i.test(text)) return "light";
+  return "standard";
 }
 
 function inferReportType(text: string) {
@@ -1872,18 +1882,107 @@ function reportReadyAnswer(response: any, fallbackText?: string) {
   return lines.join("\n");
 }
 
+async function databaseFirstResponse(user: AgentUser, question: string) {
+  const lower = question.toLowerCase();
+
+  if (isReportRequest(question)) {
+    const reportResponse = await buildBusinessReport(user, { reportType: inferReportType(question) });
+    if ((reportResponse as any).pdf) {
+      return {
+        answer: reportReadyAnswer(reportResponse),
+        action: { label: `Download ${(reportResponse as any).pdf.label || "PDF report"}`, href: String((reportResponse as any).pdf.url) }
+      };
+    }
+    if ((reportResponse as any).ok === false) {
+      return { answer: `## Report Not Available\n\n${(reportResponse as any).error || "Your role cannot generate this PDF report."}` };
+    }
+    return null;
+  }
+
+  if (/\b(low stock|reorder level|items? running low|stock risk)\b/i.test(question)) {
+    const snapshot = await getDashboardSnapshot(user.shopId, user.role);
+    const rows = snapshot.lowStock.slice(0, 8);
+    const answer = rows.length
+      ? [
+          "## Low Stock From Live Inventory",
+          "",
+          ...rows.map((product: any) => `- **${product.name}** (${product.sku}) has **${product.stockQty}** left. Reorder level: **${product.reorderLevel}**.`),
+          "",
+          `${rows.length} item${rows.length === 1 ? "" : "s"} need attention.`
+        ].join("\n")
+      : "## Low Stock From Live Inventory\n\nNo active products are currently at or below reorder level.";
+    return { answer, action: { label: "Open Inventory", href: workspacePath(user.role, "products") } };
+  }
+
+  if (/\b(unpaid invoices?|partial invoices?|pending invoices?|invoice dues)\b/i.test(question)) {
+    if (!can(user.role, "invoices", "read")) return null;
+    const invoices = await prisma.invoice.findMany({
+      where: { shopId: user.shopId, dueAmount: { gt: 0 }, status: { in: ["UNPAID", "PARTIAL"] } },
+      include: { customer: true },
+      orderBy: { dueAmount: "desc" },
+      take: 8
+    });
+    const totalDue = invoices.reduce((sum, invoice) => sum + n(invoice.dueAmount), 0);
+    const answer = invoices.length
+      ? [
+          "## Pending Invoices From Live Billing",
+          "",
+          `Top ${invoices.length} pending invoices total **${moneyLabel(totalDue)}**.`,
+          "",
+          ...invoices.map((invoice) => `- **${invoice.invoiceNo}** - ${invoice.customer?.name || "Walk-in"} - ${moneyLabel(invoice.dueAmount)} due (${invoice.status})`)
+        ].join("\n")
+      : "## Pending Invoices From Live Billing\n\nNo unpaid or partial invoices are currently visible for your role.";
+    return { answer, action: { label: "Open Billing", href: workspacePath(user.role, "billing") } };
+  }
+
+  if (/\b(today sales|monthly revenue|inventory value|customer dues|supplier dues|dashboard totals|business totals)\b/i.test(lower)) {
+    const snapshot = await getDashboardSnapshot(user.shopId, user.role);
+    const lines = [
+      "## Live ShopIQ Totals",
+      "",
+      `- **Today sales:** ${moneyLabel(snapshot.metrics.todaySales)} (${snapshot.metrics.salesWindowLabel})`,
+      `- **Revenue:** ${moneyLabel(snapshot.metrics.monthlyRevenue)} (${snapshot.metrics.revenueWindowLabel})`,
+      `- **Inventory value:** ${moneyLabel(snapshot.metrics.inventoryValue)}`,
+      `- **Customer dues:** ${moneyLabel(snapshot.metrics.customerDues)}`,
+      canReadSupplierCashflow(user.role) ? `- **Supplier payables:** ${moneyLabel(snapshot.metrics.supplierDues)}` : null,
+      `- **Low stock:** ${Number(snapshot.metrics.lowStockCount || 0).toLocaleString()} product${Number(snapshot.metrics.lowStockCount || 0) === 1 ? "" : "s"}`
+    ].filter(Boolean);
+    return { answer: lines.join("\n"), action: { label: "Open Dashboard", href: workspacePath(user.role, "dashboard") } };
+  }
+
+  return null;
+}
+
 export async function runShopIqAgentTurn(input: {
   user: AgentUser;
   question: string;
   recentMessages: Array<{ role: string; content: string }>;
 }) {
+  const direct = await databaseFirstResponse(input.user, input.question);
+  if (direct) {
+    return {
+      answer: direct.answer,
+      provider: "database",
+      model: "database-first",
+      confidence: 0.98,
+      toolResults: [],
+      pendingAction: null,
+      action: direct.action
+    };
+  }
+
   const taskContext = await buildTaskContext(input.user, input.question);
+  const taskClass = taskClassForQuestion(input.question);
+  const cacheable = !isWriteRequest(input.question);
   const result = await runGeminiToolTurn({
     systemInstruction: buildSystemInstruction(input.user),
     userPrompt: `Current ShopIQ task context:\n${taskContext}\n\nUser request:\n${input.question}`,
     history: historyToContents(input.recentMessages),
     tools: buildToolDeclarations(),
-    executeToolCall: (call) => executeToolCall(input.user, call)
+    executeToolCall: (call) => executeToolCall(input.user, call),
+    taskClass,
+    cacheable,
+    cacheKey: `shop:${input.user.shopId}:role:${input.user.role}:task:${taskClass}:q:${input.question.trim().toLowerCase().slice(0, 260)}`
   });
   const pendingResponse = result.toolResults.find((tool) => tool.name === "prepare_business_action" && (tool.response as any).pendingAction)?.response as { pendingAction?: PreparedAiAction; previewMarkdown?: string } | undefined;
   let reportResponse = result.toolResults.find((tool) => tool.name === "build_business_report" && (tool.response as any).pdf)?.response as any;
