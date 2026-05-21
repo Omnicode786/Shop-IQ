@@ -3,8 +3,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bell, LogOut, Search } from "lucide-react";
 import { useState } from "react";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { UiModeToggle } from "@/components/ui-mode-toggle";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,9 +36,6 @@ export function Topbar({ user }: { user: { name: string; role: string } | null }
           <Input className="topbar-search-input h-10 pl-10 shadow-none" placeholder="Search inventory, bills, customers, suppliers..." />
         </div>
         <div className="topbar-actions ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
-          <UiModeToggle compact className="hidden min-[540px]:flex xl:hidden" />
-          <UiModeToggle className="hidden xl:flex" />
-          <ThemeToggle />
           {canViewReports ? (
             <Button variant="outline" size="icon" asChild className="shrink-0">
               <Link href="/admin/reports" title="Reports">

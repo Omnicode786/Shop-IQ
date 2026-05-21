@@ -1,0 +1,83 @@
+/*
+  Backup of the working modal animation before the smoother source-pill morph pass.
+  Keep this file as a quick rollback reference if the newer animation does not feel right.
+
+  Captured from src/app/globals.css and src/components/workspace/modal-portal.tsx.
+
+  .crud-modal.motion-modal {
+    will-change: transform, opacity, filter;
+    transform-origin: center !important;
+    animation: modal-origin-in 500ms cubic-bezier(0.19, 1, 0.22, 1) both !important;
+  }
+
+  .crud-modal.motion-modal[data-state="closing"] {
+    pointer-events: none;
+    animation: modal-origin-out 440ms cubic-bezier(0.4, 0, 0.2, 1) both !important;
+  }
+
+  @keyframes modal-origin-in {
+    0% {
+      opacity: 0;
+      filter: blur(2.4px);
+      transform: translate3d(var(--modal-dx, 0px), var(--modal-dy, 18px), 0) scale(var(--modal-origin-scale, 0.96));
+    }
+    28% {
+      opacity: 0.72;
+      filter: blur(1px);
+      transform: translate3d(calc(var(--modal-dx, 0px) * 0.32), calc(var(--modal-dy, 18px) * 0.28 - 7px), 0) scale(0.88);
+    }
+    52% {
+      opacity: 0.96;
+      filter: blur(0);
+      transform: translate3d(calc(var(--modal-dx, 0px) * 0.07), calc(var(--modal-dy, 18px) * 0.04 - 6px), 0) scale(1.018);
+    }
+    72% {
+      opacity: 1;
+      filter: blur(0);
+      transform: translate3d(0, -2px, 0) scale(0.996);
+    }
+    88% {
+      opacity: 1;
+      filter: blur(0);
+      transform: translate3d(0, 0.7px, 0) scale(1.003);
+    }
+    100% {
+      opacity: 1;
+      filter: blur(0);
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+  }
+
+  @keyframes modal-origin-out {
+    0% {
+      opacity: 1;
+      filter: blur(0);
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    16% {
+      opacity: 0.99;
+      filter: blur(0);
+      transform: translate3d(0, 5px, 0) scale(0.992);
+    }
+    34% {
+      opacity: 0.94;
+      filter: blur(0.2px);
+      transform: translate3d(calc(var(--modal-dx, 0px) * 0.08), calc(var(--modal-dy, 18px) * 0.06 + 10px), 0) scale(0.94);
+    }
+    56% {
+      opacity: 0.78;
+      filter: blur(0.8px);
+      transform: translate3d(calc(var(--modal-dx, 0px) * 0.34), calc(var(--modal-dy, 18px) * 0.28 + 7px), 0) scale(0.74);
+    }
+    78% {
+      opacity: 0.36;
+      filter: blur(1.6px);
+      transform: translate3d(calc(var(--modal-dx, 0px) * 0.72), calc(var(--modal-dy, 18px) * 0.68 + 2px), 0) scale(calc(var(--modal-origin-scale, 0.96) + 0.1));
+    }
+    100% {
+      opacity: 0;
+      filter: blur(2.4px);
+      transform: translate3d(var(--modal-dx, 0px), var(--modal-dy, 18px), 0) scale(var(--modal-origin-scale, 0.96));
+    }
+  }
+*/

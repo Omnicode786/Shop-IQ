@@ -18,5 +18,6 @@ export const STAFF_NAV = [
   { href: "/staff/products", label: "Inventory" },
   { href: "/staff/customers", label: "Customers" },
   { href: "/staff/payments", label: "Payments" },
-  { href: "/staff/assistant", label: "AI Assistant" }
+  { href: "/staff/assistant", label: "AI Assistant" },
+  { href: "/staff/settings", label: "Settings" }
 ];

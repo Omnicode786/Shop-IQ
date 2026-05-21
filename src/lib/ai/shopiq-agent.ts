@@ -1,11 +1,12 @@
 import bcrypt from "bcryptjs";
-import { endOfDay, startOfDay } from "date-fns";
+import { endOfDay, startOfDay, subDays } from "date-fns";
 import { z } from "zod";
 import type { Content, FunctionCall, FunctionDeclaration } from "@google/genai";
 import type { UserRole } from "@prisma/client";
 import { runGeminiToolTurn } from "@/lib/ai";
 import { getDashboardSnapshot } from "@/lib/data";
 import { prisma } from "@/lib/prisma";
+import { buildReportDownloadUrl, normalizeReportType, reportFileSlug, reportLabel, reportRangeLabel, REPORT_TYPE_VALUES } from "@/lib/report-config";
 import {
   can,
   canCreateStaffRole,
@@ -41,6 +42,8 @@ type AgentUser = {
 };
 
 export type AiActionType =
+  | "create_category"
+  | "update_category"
   | "create_product"
   | "update_product"
   | "create_customer"
@@ -50,6 +53,7 @@ export type AiActionType =
   | "create_payment"
   | "create_invoice"
   | "create_purchase"
+  | "create_stock_adjustment"
   | "create_staff"
   | "update_staff";
 
@@ -62,6 +66,7 @@ export type PendingAiActionMetadata = {
   provider?: string;
   model?: string;
   toolResults?: unknown[];
+  action?: { label: string; href: string };
 };
 
 export type PreparedAiAction = {
@@ -74,6 +79,19 @@ export type PreparedAiAction = {
 
 type BusinessEntity = "products" | "customers" | "suppliers" | "invoices" | "purchases" | "payments" | "staff";
 type OperatingJob = "reorder_plan" | "collections_plan" | "cashflow_risk" | "sales_quality_review" | "stock_audit";
+
+const categoryCreateSchema = z.object({
+  name: requiredText("Category name"),
+  color: optionalText(40)
+});
+
+const categoryUpdateSchema = z.object({
+  id: z.string().min(1, "Category id is required."),
+  changes: z.object({
+    name: requiredText("Category name").optional(),
+    color: nullableText(40)
+  }).refine((value) => Object.values(value).some((item) => item !== undefined), "Add at least one category field to update.")
+});
 
 const CONFIRM_RE = /^(yes|yep|yeah|ok|okay|confirm|confirmed|create it|save it|add it|record it|update it|proceed|do it|approve|approved|go ahead|yes add|yes create|yes save|yes update|yes record)/i;
 const CANCEL_RE = /^(no|nope|cancel|cancel it|do not|don't|dont|not now|stop|reject|discard)/i;
@@ -219,6 +237,19 @@ const purchaseCreateSchema = z.object({
   items: z.array(purchaseItemSchema).min(1, "Add at least one purchase item.")
 });
 
+const stockAdjustmentSchema = z.object({
+  productId: optionalId,
+  productSku: optionalText(80),
+  productName: optionalText(160),
+  movementType: z.enum(["ADJUSTMENT", "DAMAGE", "RETURN_IN", "RETURN_OUT"]).default("ADJUSTMENT"),
+  mode: z.enum(["SET", "INCREMENT", "DECREMENT"]).optional(),
+  targetStock: intQty.optional(),
+  quantity: positiveIntQty.optional(),
+  reference: optionalText(120),
+  notes: optionalText(600)
+}).refine((value) => value.productId || value.productSku || value.productName, "A product reference is required.")
+  .refine((value) => value.targetStock !== undefined || value.quantity !== undefined, "Provide targetStock or quantity.");
+
 const staffCreateSchema = z.object({
   name: requiredText("Name"),
   email: z.string().trim().email().toLowerCase(),
@@ -253,6 +284,27 @@ const customerBalanceSummarySchema = z.object({
   customerName: optionalText(160)
 }).refine((value) => value.customerId || value.customerName, "Provide a customerId or customerName.");
 
+const productPerformanceSchema = z.object({
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+  productId: optionalId,
+  productSku: optionalText(80),
+  productName: optionalText(160),
+  limit: z.coerce.number().optional()
+});
+
+const customerCreditRiskSchema = z.object({
+  limit: z.coerce.number().optional(),
+  minimumBalance: money.optional()
+});
+
+const businessReportSchema = z.object({
+  reportType: z.enum(REPORT_TYPE_VALUES).default("full_business_review"),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+  limit: z.coerce.number().optional()
+});
+
 const entityResource: Record<BusinessEntity, PermissionResource> = {
   products: "products",
   customers: "customers",
@@ -264,6 +316,8 @@ const entityResource: Record<BusinessEntity, PermissionResource> = {
 };
 
 const actionResource: Record<AiActionType, { resource: PermissionResource; action: CrudAction }> = {
+  create_category: { resource: "products", action: "create" },
+  update_category: { resource: "products", action: "update" },
   create_product: { resource: "products", action: "create" },
   update_product: { resource: "products", action: "update" },
   create_customer: { resource: "customers", action: "create" },
@@ -273,6 +327,7 @@ const actionResource: Record<AiActionType, { resource: PermissionResource; actio
   create_payment: { resource: "payments", action: "create" },
   create_invoice: { resource: "invoices", action: "create" },
   create_purchase: { resource: "purchases", action: "create" },
+  create_stock_adjustment: { resource: "products", action: "update" },
   create_staff: { resource: "staff", action: "create" },
   update_staff: { resource: "staff", action: "update" }
 };
@@ -356,6 +411,10 @@ Reply **Yes, proceed** to apply this in ShopIQ, or **Cancel** to discard it.`;
 
 function parseActionPayload(action: AiActionType, payload: unknown) {
   switch (action) {
+    case "create_category":
+      return categoryCreateSchema.parse(payload);
+    case "update_category":
+      return categoryUpdateSchema.parse(payload);
     case "create_product":
       return productCreateSchema.parse(payload);
     case "update_product":
@@ -374,6 +433,8 @@ function parseActionPayload(action: AiActionType, payload: unknown) {
       return invoiceCreateSchema.parse(payload);
     case "create_purchase":
       return purchaseCreateSchema.parse(payload);
+    case "create_stock_adjustment":
+      return stockAdjustmentSchema.parse(payload);
     case "create_staff":
       return staffCreateSchema.parse(payload);
     case "update_staff":
@@ -384,12 +445,14 @@ function parseActionPayload(action: AiActionType, payload: unknown) {
 }
 
 function actionHref(role: UserRole, action: AiActionType) {
+  if (action.includes("category")) return workspacePath(role, "products");
   if (action.includes("product")) return workspacePath(role, "products");
   if (action.includes("customer")) return workspacePath(role, "customers");
   if (action.includes("supplier")) return workspacePath(role, "suppliers");
   if (action.includes("payment")) return workspacePath(role, "payments");
   if (action.includes("invoice")) return workspacePath(role, "billing");
   if (action.includes("purchase")) return workspacePath(role, "purchases");
+  if (action.includes("stock")) return workspacePath(role, "products");
   if (action.includes("staff")) return workspacePath(role, "staff");
   return workspacePath(role, "dashboard");
 }
@@ -454,6 +517,22 @@ async function resolveProduct(shopId: string, item: { productId?: string; produc
 
 function invoiceStatus(total: number, paid: number) {
   return paid >= total ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";
+}
+
+async function resolveStockAdjustment(user: AgentUser, data: z.infer<typeof stockAdjustmentSchema>) {
+  const product = await resolveProduct(user.shopId, data);
+  let afterQty: number;
+  if (data.targetStock !== undefined) {
+    afterQty = data.targetStock;
+  } else {
+    const quantity = Number(data.quantity || 0);
+    const mode = data.mode || (data.movementType === "RETURN_IN" ? "INCREMENT" : "DECREMENT");
+    afterQty = mode === "INCREMENT" ? product.stockQty + quantity : product.stockQty - quantity;
+  }
+  if (afterQty < 0) throw new Error(`${product.name} cannot be adjusted below zero stock.`);
+  const movementQuantity = afterQty - product.stockQty;
+  if (movementQuantity === 0) throw new Error(`${product.name} already has stock quantity ${afterQty}.`);
+  return { product, beforeQty: product.stockQty, afterQty, movementQuantity };
 }
 
 async function resolvePaymentLinks(shopId: string, payment: z.infer<typeof paymentCreateSchema>) {
@@ -534,6 +613,18 @@ async function validateActionForPreview(user: AgentUser, action: AiActionType, p
   if (!can(user.role, permission.resource, permission.action)) {
     return `Your ${user.role.toLowerCase()} role cannot ${permission.action} ${permission.resource}.`;
   }
+  if (action === "create_category") {
+    const existing = await prisma.category.findFirst({ where: { shopId: user.shopId, name: parsed.name }, select: { id: true } });
+    if (existing) return `Category "${parsed.name}" already exists.`;
+  }
+  if (action === "update_category") {
+    const existing = await prisma.category.findFirst({ where: { id: parsed.id, shopId: user.shopId }, select: { id: true } });
+    if (!existing) return "Category not found.";
+    if (parsed.changes.name) {
+      const duplicate = await prisma.category.findFirst({ where: { shopId: user.shopId, name: parsed.changes.name, NOT: { id: parsed.id } }, select: { id: true } });
+      if (duplicate) return `Category "${parsed.changes.name}" already exists.`;
+    }
+  }
   if (action === "create_product") {
     const sku = parsed.sku ? String(parsed.sku) : null;
     if (sku) {
@@ -588,11 +679,16 @@ async function validateActionForPreview(user: AgentUser, action: AiActionType, p
     await resolveSupplierId(user.shopId, parsed.supplierId, parsed.supplierName);
     await Promise.all(parsed.items.map((item: any) => resolveProduct(user.shopId, item)));
   }
+  if (action === "create_stock_adjustment") {
+    await resolveStockAdjustment(user, parsed);
+  }
   return null;
 }
 
 async function prepareBusinessAction(user: AgentUser, args: Record<string, unknown>) {
   const action = z.enum([
+    "create_category",
+    "update_category",
     "create_product",
     "update_product",
     "create_customer",
@@ -602,6 +698,7 @@ async function prepareBusinessAction(user: AgentUser, args: Record<string, unkno
     "create_payment",
     "create_invoice",
     "create_purchase",
+    "create_stock_adjustment",
     "create_staff",
     "update_staff"
   ]).parse(args.action);
@@ -967,6 +1064,230 @@ async function runOperatingJob(user: AgentUser, args: Record<string, unknown>) {
   return { ok: true, job, generatedAt: new Date().toISOString(), records: serializable(products) };
 }
 
+async function getProductPerformance(user: AgentUser, args: Record<string, unknown>) {
+  if (!can(user.role, "products", "read") || !can(user.role, "invoices", "read")) return { ok: false, error: "Your role cannot read product performance." };
+  const data = productPerformanceSchema.parse(args);
+  const end = endOfDay(data.endDate || new Date());
+  const start = startOfDay(data.startDate || subDays(end, 29));
+  const limit = safeLimit(data.limit, 8, 20);
+  const productFilter = data.productId
+    ? { id: data.productId }
+    : data.productSku
+      ? { sku: data.productSku }
+      : data.productName
+        ? { name: contains(data.productName) }
+        : {};
+
+  const items = await prisma.invoiceItem.findMany({
+    where: {
+      invoice: { shopId: user.shopId, invoiceDate: { gte: start, lte: end }, status: { not: "CANCELLED" } },
+      product: { shopId: user.shopId, ...productFilter }
+    },
+    include: { product: { include: { category: true } }, invoice: { select: { id: true, invoiceNo: true, invoiceDate: true, status: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 600
+  });
+
+  const products = new Map<string, {
+    id: string;
+    sku: string;
+    name: string;
+    category: string | null;
+    quantitySold: number;
+    revenue: number;
+    grossProfit: number;
+    invoiceCount: Set<string>;
+    currentStock: number;
+    reorderLevel: number;
+    reorderQuantity: number;
+    stockoutRisk: string;
+  }>();
+
+  for (const item of items) {
+    const current = products.get(item.productId) || {
+      id: item.productId,
+      sku: item.product.sku,
+      name: item.product.name,
+      category: item.product.category?.name || null,
+      quantitySold: 0,
+      revenue: 0,
+      grossProfit: 0,
+      invoiceCount: new Set<string>(),
+      currentStock: item.product.stockQty,
+      reorderLevel: item.product.reorderLevel,
+      reorderQuantity: item.product.reorderQuantity,
+      stockoutRisk: item.product.stockQty <= item.product.reorderLevel ? "HIGH" : item.product.stockQty <= item.product.reorderLevel * 2 ? "MEDIUM" : "LOW"
+    };
+    current.quantitySold += item.quantity;
+    current.revenue += n(item.total);
+    current.grossProfit += (n(item.unitPrice) - n(item.costPrice)) * item.quantity;
+    current.invoiceCount.add(item.invoiceId);
+    products.set(item.productId, current);
+  }
+
+  const rows = [...products.values()]
+    .map((product) => ({
+      ...product,
+      invoiceCount: product.invoiceCount.size,
+      averageSellingPrice: product.quantitySold ? product.revenue / product.quantitySold : 0,
+      grossMarginPercent: product.revenue ? Math.round((product.grossProfit / product.revenue) * 10000) / 100 : 0,
+      suggestedReorderQty: product.stockoutRisk === "HIGH" ? Math.max(product.reorderQuantity, product.quantitySold) : 0
+    }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, limit);
+
+  return {
+    ok: true,
+    startDate: start.toISOString(),
+    endDate: end.toISOString(),
+    productScope: data.productId || data.productSku || data.productName || "all products",
+    totals: {
+      productCount: rows.length,
+      quantitySold: rows.reduce((sum, row) => sum + row.quantitySold, 0),
+      revenue: rows.reduce((sum, row) => sum + row.revenue, 0),
+      grossProfit: rows.reduce((sum, row) => sum + row.grossProfit, 0)
+    },
+    records: serializable(rows)
+  };
+}
+
+async function getCustomerCreditRisk(user: AgentUser, args: Record<string, unknown>) {
+  if (!can(user.role, "customers", "read") || !can(user.role, "invoices", "read")) return { ok: false, error: "Your role cannot read customer credit risk." };
+  const data = customerCreditRiskSchema.parse(args);
+  const limit = safeLimit(data.limit, 10, 30);
+  const minimumBalance = n(data.minimumBalance);
+  const now = new Date();
+  const customers = await prisma.customer.findMany({
+    where: { shopId: user.shopId, balance: { gt: minimumBalance } },
+    include: {
+      invoices: { where: { dueAmount: { gt: 0 } }, orderBy: [{ dueDate: "asc" }, { invoiceDate: "asc" }], take: 10 },
+      payments: { orderBy: { paidAt: "desc" }, take: 1 }
+    },
+    orderBy: { balance: "desc" },
+    take: limit
+  });
+
+  const records = customers.map((customer) => {
+    const overdueInvoices = customer.invoices.filter((invoice) => invoice.dueDate && invoice.dueDate < now);
+    const oldestDueDate = customer.invoices.map((invoice) => invoice.dueDate || invoice.invoiceDate).sort((a, b) => a.getTime() - b.getTime())[0] || null;
+    const daysOld = oldestDueDate ? Math.max(0, Math.floor((now.getTime() - oldestDueDate.getTime()) / 86_400_000)) : 0;
+    const creditUsePercent = n(customer.creditLimit) > 0 ? Math.round((n(customer.balance) / n(customer.creditLimit)) * 100) : null;
+    const riskScore = Math.min(100, Math.round((n(customer.balance) / Math.max(n(customer.creditLimit), n(customer.balance), 1)) * 55 + Math.min(daysOld, 60) * 0.55 + overdueInvoices.length * 7));
+    return {
+      id: customer.id,
+      name: customer.name,
+      phone: customer.phone,
+      balance: customer.balance,
+      creditLimit: customer.creditLimit,
+      creditUsePercent,
+      riskScore,
+      riskLevel: riskScore >= 75 ? "HIGH" : riskScore >= 45 ? "MEDIUM" : "LOW",
+      overdueInvoiceCount: overdueInvoices.length,
+      outstandingInvoiceCount: customer.invoices.length,
+      oldestDueDate,
+      lastPaymentAt: customer.payments[0]?.paidAt || null,
+      recommendedAction: riskScore >= 75 ? "Call before next credit sale and collect partial payment." : riskScore >= 45 ? "Send reminder and monitor next purchase." : "Normal follow-up."
+    };
+  });
+
+  return { ok: true, generatedAt: now.toISOString(), records: serializable(records.sort((a, b) => b.riskScore - a.riskScore)) };
+}
+
+async function buildBusinessReport(user: AgentUser, args: Record<string, unknown>) {
+  if (!can(user.role, "reports", "read")) return { ok: false, error: "Your role cannot generate PDF reports." };
+  const data = businessReportSchema.parse(args);
+  const reportType = normalizeReportType(data.reportType);
+  const limit = safeLimit(data.limit, 8, 20);
+  const end = endOfDay(data.endDate || new Date());
+  const start = startOfDay(data.startDate || (reportType === "daily_summary" ? end : subDays(end, 29)));
+  const [snapshot, salesSummary, creditRisk, productPerformance] = await Promise.all([
+    getDashboardSnapshot(user.shopId, user.role),
+    getSalesSummary(user, { startDate: start, endDate: end }),
+    getCustomerCreditRisk(user, { limit }),
+    getProductPerformance(user, { startDate: start, endDate: end, limit })
+  ]);
+  const downloadUrl = buildReportDownloadUrl({ reportType, startDate: start, endDate: end, limit, source: "ai" });
+  const filename = `${reportFileSlug(reportType)}-report.pdf`;
+
+  const report: Record<string, unknown> = {
+    reportType,
+    generatedAt: new Date().toISOString(),
+    range: { startDate: start.toISOString(), endDate: end.toISOString() },
+    shop: user.shop?.name,
+    currency: user.shop?.currency || "PKR",
+    metrics: snapshot.metrics,
+    sales: salesSummary,
+    customerCreditRisk: creditRisk,
+    productPerformance
+  };
+
+  if (["inventory_report", "stock_movement_report", "business_insight_report", "full_business_review", "daily_summary", "general"].includes(reportType)) {
+    report.inventory = {
+      lowStock: snapshot.lowStock.slice(0, limit).map((product) => ({ id: product.id, sku: product.sku, name: product.name, stockQty: product.stockQty, reorderLevel: product.reorderLevel, reorderQuantity: product.reorderQuantity })),
+      fastMoving: snapshot.fastMoving.slice(0, limit),
+      slowMoving: snapshot.slowMoving.slice(0, limit),
+      categoryValue: snapshot.charts.categoryValue,
+      recentMovements: snapshot.movements.slice(0, limit)
+    };
+  }
+
+  if (["customer_report", "dues_report", "business_insight_report", "full_business_review", "daily_summary", "general"].includes(reportType)) {
+    report.dues = {
+      customerDues: snapshot.metrics.customerDues,
+      topCustomers: snapshot.customers.slice(0, limit).map((customer) => ({ id: customer.id, name: customer.name, balance: customer.balance, phone: customer.phone }))
+    };
+  }
+
+  if (reportType === "supplier_report" || reportType === "full_business_review" || reportType === "general") {
+    report.suppliers = canReadSupplierCashflow(user.role)
+      ? {
+          supplierDues: snapshot.metrics.supplierDues,
+          topSuppliers: snapshot.suppliers.slice(0, limit).map((supplier) => ({ id: supplier.id, name: supplier.name, balance: supplier.balance, reliabilityScore: supplier.reliabilityScore })),
+          purchaseStatus: snapshot.charts.purchaseStatus
+        }
+      : { hidden: true, reason: "Your role cannot read supplier cashflow." };
+  }
+
+  await prisma.activityLog.create({
+    data: {
+      shopId: user.shopId,
+      userId: user.id,
+      type: "AI_PDF_REPORT_GENERATED",
+      title: `${reportLabel(reportType)} PDF report generated`,
+      details: `${reportLabel(reportType)} report prepared by ShopIQ Copilot for ${reportRangeLabel(start, end)}.`,
+      metadata: { reportType, reportDownloadUrl: downloadUrl, source: "ai", startDate: start.toISOString(), endDate: end.toISOString(), filename }
+    }
+  });
+
+  return {
+    ok: true,
+    report: serializable(report),
+    pdf: {
+      url: downloadUrl,
+      filename,
+      label: `${reportLabel(reportType)} PDF`,
+      reportType,
+      range: reportRangeLabel(start, end)
+    }
+  };
+}
+
+async function executeCreateCategory(user: AgentUser, payload: unknown) {
+  const data = categoryCreateSchema.parse(payload);
+  const existing = await prisma.category.findFirst({ where: { shopId: user.shopId, name: data.name }, select: { id: true } });
+  if (existing) throw new Error(`Category "${data.name}" already exists.`);
+  const category = await prisma.category.create({ data: { shopId: user.shopId, name: data.name, color: data.color || "emerald" } });
+  await prisma.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_CATEGORY_CREATED", title: `AI created category: ${category.name}` } });
+  return { answer: `## Category Created\n\n**${category.name}** has been added to your product categories.`, action: { label: "Open Inventory", href: workspacePath(user.role, "products") } };
+}
+
+async function executeUpdateCategory(user: AgentUser, payload: unknown) {
+  const data = categoryUpdateSchema.parse(payload);
+  const category = await prisma.category.update({ where: { id: data.id }, data: emptyToUndefined(data.changes) });
+  await prisma.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_CATEGORY_UPDATED", title: `AI updated category: ${category.name}` } });
+  return { answer: `## Category Updated\n\n**${category.name}** has been updated.`, action: { label: "Open Inventory", href: workspacePath(user.role, "products") } };
+}
+
 async function executeCreateProduct(user: AgentUser, payload: unknown) {
   const data = productCreateSchema.parse(payload);
   const categoryId = await resolveCategoryId(user, data.categoryId, data.categoryName);
@@ -1179,6 +1500,41 @@ async function executeCreatePurchase(user: AgentUser, payload: unknown) {
   return { answer: `## Purchase Created\n\nPurchase **${purchase.purchaseNo}** has been received for ${moneyLabel(purchase.total)}.`, action: { label: "Open Purchases", href: workspacePath(user.role, "purchases") } };
 }
 
+async function executeCreateStockAdjustment(user: AgentUser, payload: unknown) {
+  const data = stockAdjustmentSchema.parse(payload);
+  const resolved = await resolveStockAdjustment(user, data);
+  const movement = await prisma.$transaction(async (tx) => {
+    await tx.product.update({ where: { id: resolved.product.id }, data: { stockQty: resolved.afterQty } });
+    const created = await tx.stockMovement.create({
+      data: {
+        shopId: user.shopId,
+        productId: resolved.product.id,
+        userId: user.id,
+        type: data.movementType,
+        quantity: resolved.movementQuantity,
+        beforeQty: resolved.beforeQty,
+        afterQty: resolved.afterQty,
+        reference: data.reference || `AI-ADJ-${Date.now()}`,
+        notes: data.notes || "Stock adjusted by ShopIQ AI after user confirmation."
+      }
+    });
+    await tx.activityLog.create({
+      data: {
+        shopId: user.shopId,
+        userId: user.id,
+        type: "AI_STOCK_ADJUSTMENT",
+        title: `AI adjusted stock: ${resolved.product.name}`,
+        details: `${resolved.beforeQty} -> ${resolved.afterQty}`
+      }
+    });
+    return created;
+  });
+  return {
+    answer: `## Stock Adjusted\n\n**${resolved.product.name}** stock changed from **${resolved.beforeQty}** to **${resolved.afterQty}**.\n\nMovement: **${movement.type}** (${resolved.movementQuantity > 0 ? "+" : ""}${resolved.movementQuantity}).`,
+    action: { label: "Open Inventory", href: workspacePath(user.role, "products") }
+  };
+}
+
 async function executeCreateStaff(user: AgentUser, payload: unknown) {
   const data = staffCreateSchema.parse(payload);
   if (!canCreateStaffRole(user.role, data.role)) throw new Error("You cannot create a member with that role.");
@@ -1220,6 +1576,10 @@ export async function executePendingAiAction(user: AgentUser, action: AiActionTy
   }
 
   switch (action) {
+    case "create_category":
+      return executeCreateCategory(user, payload);
+    case "update_category":
+      return executeUpdateCategory(user, payload);
     case "create_product":
       return executeCreateProduct(user, payload);
     case "update_product":
@@ -1238,6 +1598,8 @@ export async function executePendingAiAction(user: AgentUser, action: AiActionTy
       return executeCreateInvoice(user, payload);
     case "create_purchase":
       return executeCreatePurchase(user, payload);
+    case "create_stock_adjustment":
+      return executeCreateStockAdjustment(user, payload);
     case "create_staff":
       return executeCreateStaff(user, payload);
     case "update_staff":
@@ -1316,6 +1678,45 @@ function buildToolDeclarations(): FunctionDeclaration[] {
       }
     },
     {
+      name: "get_product_performance",
+      description: "Analyze product performance from real invoice items: quantity sold, revenue, gross profit, margin, stockout risk, and reorder suggestion for a date range.",
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          startDate: { type: "string", description: "Optional start date. Defaults to the latest 30 days." },
+          endDate: { type: "string", description: "Optional end date." },
+          productId: { type: "string" },
+          productSku: { type: "string" },
+          productName: { type: "string" },
+          limit: { type: "number" }
+        }
+      }
+    },
+    {
+      name: "get_customer_credit_risk",
+      description: "Rank customers by credit risk using current balance, credit limit usage, overdue invoices, age of dues, and latest payment.",
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number" },
+          minimumBalance: { type: "number" }
+        }
+      }
+    },
+    {
+      name: "build_business_report",
+      description: "Build a structured read-only business report from live ShopIQ data and prepare a downloadable PDF report. Use this for every AI report request.",
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          reportType: { type: "string", enum: [...REPORT_TYPE_VALUES] },
+          startDate: { type: "string" },
+          endDate: { type: "string" },
+          limit: { type: "number" }
+        }
+      }
+    },
+    {
       name: "prepare_business_action",
       description: "Prepare, validate, and preview a database-changing ShopIQ action. This never writes data. Writes require explicit user confirmation after the preview.",
       parametersJsonSchema: {
@@ -1324,6 +1725,8 @@ function buildToolDeclarations(): FunctionDeclaration[] {
           action: {
             type: "string",
             enum: [
+              "create_category",
+              "update_category",
               "create_product",
               "update_product",
               "create_customer",
@@ -1333,6 +1736,7 @@ function buildToolDeclarations(): FunctionDeclaration[] {
               "create_payment",
               "create_invoice",
               "create_purchase",
+              "create_stock_adjustment",
               "create_staff",
               "update_staff"
             ]
@@ -1355,6 +1759,9 @@ async function executeToolCall(user: AgentUser, call: FunctionCall) {
   if (name === "run_operating_job") return runOperatingJob(user, args);
   if (name === "get_sales_summary") return getSalesSummary(user, args);
   if (name === "get_customer_balance_summary") return getCustomerBalanceSummary(user, args);
+  if (name === "get_product_performance") return getProductPerformance(user, args);
+  if (name === "get_customer_credit_risk") return getCustomerCreditRisk(user, args);
+  if (name === "build_business_report") return buildBusinessReport(user, args);
   if (name === "prepare_business_action") return prepareBusinessAction(user, args);
   return { ok: false, error: `Unknown tool: ${name}` };
 }
@@ -1372,9 +1779,13 @@ Operating rules:
 - ${supplierScope}
 - For exact date questions about sales, revenue, earning, profit, cash received, items sold, or invoice totals, call get_sales_summary with the user's date range.
 - For exact customer pending-money, dues, balance, outstanding-invoice, or payment-history questions, call get_customer_balance_summary.
+- For product ranking, weak products, margin questions, fast movers, stockout risk, or item performance, call get_product_performance.
+- For credit risk, collection priority, or "who should I collect from first", call get_customer_credit_risk.
+- For any requested AI report, PDF report, sales report, inventory report, customer report, profit/loss report, stock movement report, business insight report, summary, daily brief, or supplier report, call build_business_report. Do not provide chat-only reports; the user must receive a PDF download action plus a short summary.
 - For any database-changing request, call prepare_business_action first. Never claim a write happened until the server confirms it after the user's later approval.
+- Supported preview-gated record generation includes categories, products, customers, suppliers, payments, invoices/bills, purchases, stock adjustments, and staff records.
 - Deletions, account suspension, bulk destructive edits, secret retrieval, and bypassing role permissions are not allowed through the AI agent.
-- If a create/update/payment/invoice/purchase/staff request is missing required fields, ask for the exact missing fields.
+- If a create/update/payment/invoice/purchase/category/stock/staff request is missing required fields, ask for the exact missing fields.
 - Prefer concise operational answers with numbers, ids when relevant, risks, and the next practical step.
 - When using search results to prepare an action, choose ids from tool results only. Never invent ids, SKUs, invoice numbers, or balances.
 - Do not expose password hashes, JWT/session details, API keys, database connection strings, or hidden fields.
@@ -1395,10 +1806,12 @@ async function buildTaskContext(user: AgentUser, question: string) {
     context.lowStock = snapshot.lowStock.map((product) => ({ id: product.id, sku: product.sku, name: product.name, stockQty: product.stockQty, reorderLevel: product.reorderLevel, reorderQuantity: product.reorderQuantity }));
     context.fastMoving = snapshot.fastMoving;
     context.slowMoving = snapshot.slowMoving;
+    context.productPerformanceHint = "For product ranking, margin, quantity sold, weak products, or stockout risk, call get_product_performance.";
   }
   if (/(customer|client|due|owe|pending|balance|collect|receivable|invoice|bill)/.test(lower)) {
     context.customerDues = snapshot.customers.map((customer) => ({ id: customer.id, name: customer.name, balance: customer.balance }));
     context.invoiceStatus = snapshot.charts.invoiceStatus;
+    context.creditRiskHint = "For collection priority or credit risk ranking, call get_customer_credit_risk.";
   }
   if (/(earning|revenue|sales|profit|cash received|income|sold|date|today|yesterday|month)/.test(lower)) {
     context.salesHint = "For exact date/range answers, call get_sales_summary with startDate and optional endDate.";
@@ -1408,6 +1821,9 @@ async function buildTaskContext(user: AgentUser, question: string) {
     context.supplierDues = snapshot.suppliers.map((supplier) => ({ id: supplier.id, name: supplier.name, balance: supplier.balance, reliabilityScore: supplier.reliabilityScore }));
     context.purchaseStatus = snapshot.charts.purchaseStatus;
   }
+  if (/(report|summary|brief|review|daily|weekly|monthly|insight)/.test(lower)) {
+    context.reportHint = "For business-ready summaries and reports, call build_business_report so the final response includes a PDF download action.";
+  }
   return JSON.stringify(serializable(context));
 }
 
@@ -1416,6 +1832,44 @@ function historyToContents(messages: Array<{ role: string; content: string }>): 
     role: message.role === "USER" ? "user" : "model",
     parts: [{ text: message.content.slice(0, 1800) }]
   }));
+}
+
+function isReportRequest(text: string) {
+  return /\b(report|pdf|downloadable report|business insight|profit\/loss|profit and loss|stock movement report|sales report|inventory report|customer report|dues report|supplier report)\b/i.test(text);
+}
+
+function inferReportType(text: string) {
+  const lower = text.toLowerCase();
+  if (/profit\/loss|profit and loss|p&l|pnl/.test(lower)) return "profit_loss_report";
+  if (/stock movement|movement report|stock report/.test(lower)) return "stock_movement_report";
+  if (/inventory|stock|low stock/.test(lower)) return "inventory_report";
+  if (/customer|dues|receivable|collection|pending/.test(lower)) return lower.includes("dues") || lower.includes("pending") ? "dues_report" : "customer_report";
+  if (/supplier|purchase|payable/.test(lower)) return "supplier_report";
+  if (/sales|revenue|earning|income/.test(lower)) return "sales_report";
+  if (/insight|recommendation|risk/.test(lower)) return "business_insight_report";
+  if (/daily|today/.test(lower)) return "daily_summary";
+  return "full_business_review";
+}
+
+function reportReadyAnswer(response: any, fallbackText?: string) {
+  const report = response?.report || {};
+  const pdf = response?.pdf || {};
+  const sales = report.sales || {};
+  const lines = [
+    `## ${pdf.label || "ShopIQ PDF Report"} Ready`,
+    "",
+    `I generated a professional PDF report for **${pdf.range || "the selected reporting window"}** using live ShopIQ database data.`,
+    "",
+    `- **Revenue:** ${moneyLabel(sales.grossSales ?? report.metrics?.monthlyRevenue ?? 0)}`,
+    `- **Gross profit:** ${moneyLabel(sales.grossProfit ?? 0)}`,
+    `- **Cash received:** ${moneyLabel(sales.cashReceived ?? 0)}`,
+    `- **Invoices analyzed:** ${Number(sales.invoiceCount || 0).toLocaleString()}`
+  ];
+  if (fallbackText) {
+    lines.push("", "### AI notes", fallbackText.split("\n").slice(0, 5).join("\n"));
+  }
+  lines.push("", "Use the download button below to open the PDF report.");
+  return lines.join("\n");
 }
 
 export async function runShopIqAgentTurn(input: {
@@ -1432,13 +1886,22 @@ export async function runShopIqAgentTurn(input: {
     executeToolCall: (call) => executeToolCall(input.user, call)
   });
   const pendingResponse = result.toolResults.find((tool) => tool.name === "prepare_business_action" && (tool.response as any).pendingAction)?.response as { pendingAction?: PreparedAiAction; previewMarkdown?: string } | undefined;
+  let reportResponse = result.toolResults.find((tool) => tool.name === "build_business_report" && (tool.response as any).pdf)?.response as any;
+  if (!reportResponse && isReportRequest(input.question)) {
+    reportResponse = await buildBusinessReport(input.user, { reportType: inferReportType(input.question) });
+  }
+  const hasReportPdf = Boolean(reportResponse?.pdf?.url);
+  const reportAction = hasReportPdf
+    ? { label: `Download ${reportResponse.pdf.label || "PDF report"}`, href: String(reportResponse.pdf.url) }
+    : null;
   return {
-    answer: pendingResponse?.previewMarkdown || result.text,
+    answer: pendingResponse?.previewMarkdown || (hasReportPdf ? reportReadyAnswer(reportResponse, result.text) : result.text),
     provider: result.provider,
     model: result.model,
     confidence: result.confidence,
     toolResults: result.toolResults,
-    pendingAction: pendingResponse?.pendingAction || null
+    pendingAction: pendingResponse?.pendingAction || null,
+    action: reportAction
   };
 }
 

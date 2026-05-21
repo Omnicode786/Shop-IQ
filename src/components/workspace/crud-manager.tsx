@@ -74,9 +74,10 @@ type Props = {
   canViewDetails?: boolean;
   pagination?: PaginationMeta;
   filterConfig?: FilterConfig;
+  displayMode?: "table" | "single-card";
 };
 
-const MODAL_EXIT_MS = 380;
+const MODAL_EXIT_MS = 460;
 
 function valueFor(row: any, key: string) {
   const value = row?.[key];
@@ -316,7 +317,8 @@ export function CrudManager({
   submitShape,
   canViewDetails = true,
   pagination,
-  filterConfig
+  filterConfig,
+  displayMode = "table"
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -344,6 +346,7 @@ export function CrudManager({
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const dialogOpen = mode !== "closed" || Boolean(detailRow) || Boolean(deleteRow);
+  const singleCardMode = displayMode === "single-card";
   const activeFields = useMemo(() => fields.filter((field) => (mode === "edit" ? !field.hideOnEdit : !field.hideOnCreate)), [fields, mode]);
   const detailList = useMemo(() => detailRow ? detailItems(detailRow, fields, columns) : [], [columns, detailRow, fields]);
   const hasActionColumn = canViewDetails || canUpdate || canDelete;
@@ -716,6 +719,7 @@ export function CrudManager({
         </div>
       </CardHeader>
       <CardContent className="p-0">
+        {!singleCardMode ? (
         <div className="crud-table-toolbar">
           <div className="crud-search-box">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -806,6 +810,7 @@ export function CrudManager({
             ) : null}
           </div>
         </div>
+        ) : null}
         {message && !dialogOpen ? <div className="status-message mx-4 mt-4 border-destructive/20 bg-destructive/10 text-destructive sm:mx-5">{message}</div> : null}
       {dialogOpen ? (
         <ModalPortal>
@@ -983,6 +988,69 @@ export function CrudManager({
           </div>
           </ModalPortal>
         ) : null}
+        {singleCardMode ? (
+          <div className="crud-single-record-wrap">
+            {rows[0] ? (
+              (() => {
+                const row = rows[0];
+                const rowUpdateAllowed = canUpdateRow ? canUpdateRow(row) : canUpdateRowKey ? Boolean(row[canUpdateRowKey]) : true;
+                const rowDeleteAllowed = canDeleteRow ? canDeleteRow(row) : canDeleteRowKey ? Boolean(row[canDeleteRowKey]) : true;
+                const rowCanUpdate = Boolean(canUpdate && rowUpdateAllowed);
+                const rowCanDelete = Boolean(canDelete && rowDeleteAllowed);
+
+                return (
+                  <div className="crud-single-record-card">
+                    <div className="min-w-0">
+                      <div className="crud-single-record-heading">
+                        <span className="crud-detail-icon">
+                          <Info className="size-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p>{rowLabel(row)}</p>
+                          <span>Primary workspace shop profile</span>
+                        </div>
+                      </div>
+                      <div className="crud-single-record-grid">
+                        {columns.map((column) => (
+                          <div key={column.key} className="crud-single-record-field">
+                            <span>{column.label}</span>
+                            <strong>{cellContent(column, row)}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="crud-single-record-actions">
+                      {canViewDetails ? (
+                        <Button size="sm" variant="secondary" onClick={(event) => openDetails(row, event)} disabled={loading}>
+                          <Eye className="size-3.5" />
+                          Details
+                        </Button>
+                      ) : null}
+                      {rowCanUpdate ? (
+                        <Button size="sm" variant="outline" onClick={(event) => openEdit(row, event)} disabled={loading}>
+                          <Edit3 className="size-3.5" />
+                          Edit
+                        </Button>
+                      ) : null}
+                      {rowCanDelete ? (
+                        <Button size="sm" variant="destructive" onClick={(event) => requestDelete(row, event)} disabled={loading}>
+                          <Trash2 className="size-3.5" />
+                          {deleteLabel}
+                        </Button>
+                      ) : null}
+                      {!canViewDetails && !rowCanUpdate && !rowCanDelete ? <Badge variant="outline">Protected</Badge> : null}
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              <div className="crud-single-record-card">
+                <div className="empty-state">{emptyState}</div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
         <div className={cn("crud-table-scroll relative overflow-x-auto", isPending && "is-loading")}>
           {isPending ? (
             <div className="crud-table-pending" aria-live="polite" aria-label="Loading records">
@@ -1090,6 +1158,8 @@ export function CrudManager({
             </Button>
           </div>
         </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

@@ -2,6 +2,7 @@ import { format } from "date-fns";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage, type RGB } from "pdf-lib";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { normalizeReportType, reportDescription, reportLabel, reportRangeLabel, type ReportType } from "@/lib/report-config";
 
 type ShopInfo = {
   name: string;
@@ -22,6 +23,10 @@ type ReportPdfInput = {
   user: ReportUser;
   snapshot: any;
   generatedAt?: Date;
+  reportType?: ReportType | string;
+  startDate?: Date | string | null;
+  endDate?: Date | string | null;
+  businessReport?: any;
 };
 
 type Fonts = {
@@ -294,7 +299,23 @@ function activityRows(snapshot: any) {
   }));
 }
 
-function buildSummaryText(snapshot: any) {
+function buildSummaryText(snapshot: any, reportType: ReportType = "general", businessReport?: any) {
+  const sales = businessReport?.sales;
+  if (reportType === "sales_report" && sales?.ok !== false) {
+    return `This sales report is based on ${num(sales?.invoiceCount)} invoice records, ${money(sales?.grossSales)} gross sales, ${money(sales?.cashReceived)} cash received and ${num(sales?.itemsSold)} items sold in the selected period. Follow the highest selling products and unpaid invoices before planning the next purchase cycle.`;
+  }
+  if (reportType === "profit_loss_report" && sales?.ok !== false) {
+    return `This profit and loss view shows ${money(sales?.grossSales)} gross sales and ${money(sales?.grossProfit)} estimated gross profit from invoice item margins in the selected period. Watch discounting, unpaid invoice value and low-margin fast movers before increasing stock exposure.`;
+  }
+  if (reportType === "inventory_report" || reportType === "stock_movement_report") {
+    return `This inventory report uses current stock, low-stock thresholds, category value and recent movement records. Prioritize products below reorder level, then compare sales movement against stock on hand before purchasing.`;
+  }
+  if (reportType === "customer_report" || reportType === "dues_report") {
+    return `This customer report focuses on receivables and ledger pressure. The highest balances should be reviewed first, especially customers with repeated partial or unpaid invoices.`;
+  }
+  if (reportType === "supplier_report") {
+    return `This supplier report focuses on payables, supplier balances and purchase pressure visible to the current role. Time supplier payouts against customer collections and current sales velocity.`;
+  }
   const stockRisk = num(snapshot.metrics?.stockRiskScore);
   const dueGap = num(snapshot.metrics?.customerDues) - num(snapshot.metrics?.supplierDues);
   const riskCopy = stockRisk > 35 ? "Stock risk needs attention because a meaningful part of the catalog is near reorder level." : "Stock control is stable, with only a limited set of products near reorder level.";
@@ -302,7 +323,12 @@ function buildSummaryText(snapshot: any) {
   return `${riskCopy} ${duesCopy} Fast movers and category concentration should guide the next purchase cycle.`;
 }
 
-export async function buildGeneralReportPdf({ shop, user, snapshot, generatedAt = new Date() }: ReportPdfInput) {
+export async function buildGeneralReportPdf({ shop, user, snapshot, generatedAt = new Date(), reportType: rawReportType = "general", startDate, endDate, businessReport }: ReportPdfInput) {
+  const reportType = normalizeReportType(rawReportType);
+  const title = `${reportLabel(reportType)} PDF Report`;
+  const description = reportDescription(reportType);
+  const rangeLabel = reportRangeLabel(startDate, endDate);
+  const sales = businessReport?.sales;
   const pdf = await PDFDocument.create();
   const fonts: Fonts = {
     regular: await pdf.embedFont(StandardFonts.Helvetica),
@@ -334,28 +360,28 @@ export async function buildGeneralReportPdf({ shop, user, snapshot, generatedAt 
     drawText(page, "ShopIQ", PAGE.margin, PAGE.height - 54, 18, fonts.bold, COLORS.white);
   }
 
-  drawText(page, "General Business Report", PAGE.margin + 18, PAGE.height - 112, 28, fonts.bold, COLORS.white, 420);
-  drawWrappedText(page, `${shop.name} - ${shop.city || "Business workspace"} - generated ${format(generatedAt, "dd MMM yyyy, hh:mm a")}`, PAGE.margin + 18, PAGE.height - 138, 520, 10, fonts.regular, rgb(0.78, 0.83, 0.92), 2);
+  drawText(page, title, PAGE.margin + 18, PAGE.height - 112, 28, fonts.bold, COLORS.white, 420);
+  drawWrappedText(page, `${shop.name} - ${shop.city || "Business workspace"} - ${rangeLabel} - generated ${format(generatedAt, "dd MMM yyyy, hh:mm a")}`, PAGE.margin + 18, PAGE.height - 138, 520, 10, fonts.regular, rgb(0.78, 0.83, 0.92), 2);
   drawText(page, `Prepared for ${user.name} (${user.role})`, PAGE.margin + 18, PAGE.height - 172, 10, fonts.regular, rgb(0.78, 0.83, 0.92), 420);
 
   drawCard(page, PAGE.width - 278, PAGE.height - 178, 218, 92, rgb(0.1, 0.13, 0.22));
   drawText(page, "REPORT WINDOW", PAGE.width - 258, PAGE.height - 114, 7.5, fonts.bold, rgb(0.78, 0.83, 0.92));
-  drawText(page, snapshot.metrics?.revenueWindowLabel || "Current reporting period", PAGE.width - 258, PAGE.height - 135, 13, fonts.bold, COLORS.white, 176);
-  drawText(page, `${snapshot.invoices?.length || 0} recent invoices analyzed`, PAGE.width - 258, PAGE.height - 154, 8.5, fonts.regular, rgb(0.78, 0.83, 0.92), 176);
+  drawText(page, rangeLabel || snapshot.metrics?.revenueWindowLabel || "Current reporting period", PAGE.width - 258, PAGE.height - 135, 13, fonts.bold, COLORS.white, 176);
+  drawText(page, `${sales?.invoiceCount ?? snapshot.invoices?.length ?? 0} invoice records analyzed`, PAGE.width - 258, PAGE.height - 154, 8.5, fonts.regular, rgb(0.78, 0.83, 0.92), 176);
 
   const metricsY = PAGE.height - 326;
   const cardW = 238;
-  drawMetricCard(ctx, PAGE.margin, metricsY, cardW, "Revenue", money(snapshot.metrics?.monthlyRevenue), snapshot.metrics?.revenueWindowLabel || "Reporting revenue", COLORS.blue);
+  drawMetricCard(ctx, PAGE.margin, metricsY, cardW, "Revenue", money(sales?.grossSales ?? snapshot.metrics?.monthlyRevenue), sales ? "Selected report period" : snapshot.metrics?.revenueWindowLabel || "Reporting revenue", COLORS.blue);
   drawMetricCard(ctx, PAGE.margin + cardW + 18, metricsY, cardW, "Inventory value", money(snapshot.metrics?.inventoryValue), `${snapshot.metrics?.productCount || 0} active products`, COLORS.violet);
   drawMetricCard(ctx, PAGE.margin + (cardW + 18) * 2, metricsY, cardW, "Stock risk", `${Math.round(num(snapshot.metrics?.stockRiskScore))}%`, `${snapshot.metrics?.lowStockCount || 0} low stock products`, COLORS.amber);
 
   drawMetricCard(ctx, PAGE.margin, metricsY - 104, cardW, "Customer dues", money(snapshot.metrics?.customerDues), "Receivable balance", COLORS.emerald);
-  drawMetricCard(ctx, PAGE.margin + cardW + 18, metricsY - 104, cardW, "Supplier payables", money(snapshot.metrics?.supplierDues), "Outstanding supplier balance", COLORS.rose);
-  drawMetricCard(ctx, PAGE.margin + (cardW + 18) * 2, metricsY - 104, cardW, "Today sales", money(snapshot.metrics?.todaySales), snapshot.metrics?.salesWindowLabel || "Today", COLORS.cyan);
+  drawMetricCard(ctx, PAGE.margin + cardW + 18, metricsY - 104, cardW, reportType === "profit_loss_report" ? "Gross profit" : "Supplier payables", money(reportType === "profit_loss_report" ? sales?.grossProfit : snapshot.metrics?.supplierDues), reportType === "profit_loss_report" ? "Estimated item margin" : "Outstanding supplier balance", COLORS.rose);
+  drawMetricCard(ctx, PAGE.margin + (cardW + 18) * 2, metricsY - 104, cardW, sales ? "Cash received" : "Today sales", money(sales?.cashReceived ?? snapshot.metrics?.todaySales), sales ? "Customer receipts in range" : snapshot.metrics?.salesWindowLabel || "Today", COLORS.cyan);
 
   drawCard(page, PAGE.margin, 58, PAGE.width - PAGE.margin * 2, 82);
   drawText(page, "Executive reading", PAGE.margin + 18, 112, 14, fonts.bold, COLORS.ink);
-  drawWrappedText(page, buildSummaryText(snapshot), PAGE.margin + 18, 93, PAGE.width - PAGE.margin * 2 - 36, 9.2, fonts.regular, COLORS.muted, 3);
+  drawWrappedText(page, `${description} ${buildSummaryText(snapshot, reportType, businessReport)}`, PAGE.margin + 18, 93, PAGE.width - PAGE.margin * 2 - 36, 9.2, fonts.regular, COLORS.muted, 3);
 
   addPage(ctx);
   drawReportHeader(ctx, "Charts And Operating Signals", "Live report charts transformed into a compact PDF command board.");
@@ -367,7 +393,7 @@ export async function buildGeneralReportPdf({ shop, user, snapshot, generatedAt 
   drawHorizontalBars(ctx, "Payment method mix", snapshot.charts?.paymentMethodMix ?? [], PAGE.margin + 390, 104, 376, 170, (value) => money(value, true));
 
   addPage(ctx);
-  drawReportHeader(ctx, "Products, Stock And Dues", "Operational lists used for purchase planning, credit control and daily follow-up.");
+  drawReportHeader(ctx, reportType === "customer_report" || reportType === "dues_report" ? "Customer Dues And Ledger Pressure" : "Products, Stock And Dues", "Operational lists used for purchase planning, credit control and daily follow-up.");
   drawTable(
     ctx,
     "Fast moving products",
@@ -425,7 +451,7 @@ export async function buildGeneralReportPdf({ shop, user, snapshot, generatedAt 
   );
 
   addPage(ctx);
-  drawReportHeader(ctx, "Recent Records", "The latest transactional rows included in the reporting snapshot.");
+  drawReportHeader(ctx, reportType === "stock_movement_report" ? "Recent Stock Movement Records" : "Recent Records", "The latest transactional rows included in the reporting snapshot.");
   drawTable(
     ctx,
     "Recent invoices",
@@ -475,13 +501,12 @@ export async function buildGeneralReportPdf({ shop, user, snapshot, generatedAt 
   );
 
   drawFooter(ctx);
-  pdf.setTitle(`${shop.name} General Report`);
+  pdf.setTitle(`${shop.name} ${reportLabel(reportType)} Report`);
   pdf.setAuthor("ShopIQ");
-  pdf.setSubject("Business intelligence export");
+  pdf.setSubject(description);
   pdf.setCreator("ShopIQ Reports");
   pdf.setProducer("ShopIQ Reports");
   pdf.setCreationDate(generatedAt);
 
   return pdf.save();
 }
-

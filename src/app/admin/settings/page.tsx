@@ -3,6 +3,7 @@ import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { SectionHeader } from "@/components/workspace/section-header";
+import { SettingsTabs } from "@/components/workspace/settings-tabs";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { toPlain } from "@/lib/utils";
@@ -41,29 +42,34 @@ export default async function Settings() {
         <MetricCard icon={SettingsIcon} title="Workspace" value={shop.name} helper={`${shop.city} - ${shop.currency}`} />
       </div>
       <div className="mt-6">
-        <CrudManager
-          title="Shop profile"
-          description="Admins and managers can update the operational shop profile used across invoices, reports and workspace context."
-          endpoint="/api/shops"
-          rows={[shop]}
-          fields={[
-            { key: "name", label: "Shop name", required: true },
-            { key: "city", label: "City", required: true },
-            { key: "address", label: "Address", span: "half" },
-            { key: "phone", label: "Phone" },
-            { key: "currency", label: "Currency", required: true }
-          ]}
-          columns={[
-            { key: "name", label: "Shop" },
-            { key: "city", label: "City" },
-            { key: "address", label: "Address" },
-            { key: "phone", label: "Phone" },
-            { key: "currency", label: "Currency" }
-          ]}
-          canCreate={false}
-          canUpdate={can(user?.role, "settings", "update")}
-          canDelete={false}
-          emptyState="No shop profile found."
+        <SettingsTabs
+          profilePanel={
+            <CrudManager
+              title="Shop profile"
+              description="Admins and managers can update the operational shop profile used across invoices, reports and workspace context."
+              endpoint="/api/shops"
+              rows={[shop]}
+              fields={[
+                { key: "name", label: "Shop name", required: true },
+                { key: "city", label: "City", required: true },
+                { key: "address", label: "Address", span: "half" },
+                { key: "phone", label: "Phone" },
+                { key: "currency", label: "Currency", required: true }
+              ]}
+              columns={[
+                { key: "name", label: "Shop" },
+                { key: "city", label: "City" },
+                { key: "address", label: "Address" },
+                { key: "phone", label: "Phone" },
+                { key: "currency", label: "Currency" }
+              ]}
+              canCreate={false}
+              canUpdate={can(user?.role, "settings", "update")}
+              canDelete={false}
+              emptyState="No shop profile found."
+              displayMode="single-card"
+            />
+          }
         />
       </div>
     </>
