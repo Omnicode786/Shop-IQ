@@ -9,25 +9,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { captureModalOrigin, modalMotionStyle, ModalPortal, type ModalMotionOrigin } from "@/components/workspace/modal-portal";
+import { WALK_IN_PAYMENT_REQUIRED_MESSAGE, walkInInvoiceHasDue } from "@/lib/invoice-rules";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
-type Option = { label: string; value: string };
+type Option = { label: string; value: string; meta?: Record<string, any> };
 type Field = {
   key: string;
   label: string;
-  type?: "text" | "number" | "email" | "password" | "textarea" | "select";
+  type?: "text" | "number" | "email" | "password" | "textarea" | "select" | "checkbox";
   placeholder?: string;
   required?: boolean;
   defaultValue?: string | number;
   options?: Option[];
   hideOnEdit?: boolean;
   hideOnCreate?: boolean;
+  readOnly?: boolean;
   span?: "full" | "half";
   min?: number;
   max?: number;
   step?: string | number;
   autoComplete?: string;
+  showIf?: (form: Record<string, any>) => boolean;
+  showWhen?: { key: string; equals?: any; truthy?: boolean };
 };
 type Column = { key: string; label: string; render?: (row: any) => ReactNode; className?: string };
 type PaginationMeta = {
@@ -170,15 +174,57 @@ function validateForm(fields: Field[], form: Record<string, any>, mode: "create"
 
   if (endpoint.includes("/payments")) {
     const direction = form.direction || "CUSTOMER_IN";
+    const invoiceOption = fields.find((field) => field.key === "invoiceId")?.options?.find((option) => option.value === form.invoiceId);
+    const invoiceMeta = invoiceOption?.meta;
+    const purchaseOption = fields.find((field) => field.key === "purchaseId")?.options?.find((option) => option.value === form.purchaseId);
+    const purchaseMeta = purchaseOption?.meta;
     if (direction === "CUSTOMER_IN" && !form.customerId && !form.invoiceId) {
       errors.customerId = "Choose a customer or link an invoice.";
     }
-    if (direction === "SUPPLIER_OUT" && !form.supplierId && !form.purchaseId) {
-      errors.supplierId = "Choose a supplier or link a purchase.";
+    if (direction === "CUSTOMER_IN" && (form.supplierId || form.purchaseId)) {
+      errors.direction = "Customer payments cannot be linked to supplier purchases.";
+    }
+    if (direction === "SUPPLIER_OUT" && !form.purchaseId) {
+      errors.purchaseId = "Choose the purchase this supplier payment is settling.";
+    }
+    if (direction === "SUPPLIER_OUT" && (form.customerId || form.invoiceId)) {
+      errors.direction = "Supplier payments cannot be linked to customer invoices.";
+    }
+    if (form.invoiceId && invoiceMeta) {
+      if (form.customerId && invoiceMeta.customerId && form.customerId !== invoiceMeta.customerId) {
+        errors.customerId = "The selected invoice controls the customer.";
+      }
+      if (mode === "create") {
+        const remainingBalance = Number(invoiceMeta.remainingBalance || 0);
+        const amount = Number(form.amount || 0);
+        if (remainingBalance <= 0) errors.invoiceId = "This invoice is already fully paid.";
+        if (amount > remainingBalance) errors.amount = `Payment cannot exceed ${moneyLabel(remainingBalance)} remaining on this invoice.`;
+      }
+    }
+    if (form.purchaseId && purchaseMeta) {
+      if (form.supplierId && purchaseMeta.supplierId && form.supplierId !== purchaseMeta.supplierId) {
+        errors.supplierId = "The selected purchase controls the supplier.";
+      }
+      if (mode === "create") {
+        const remainingBalance = Number(purchaseMeta.remainingBalance || 0);
+        const amount = Number(form.amount || 0);
+        if (remainingBalance <= 0) errors.purchaseId = "This purchase is already fully paid.";
+        if (amount > remainingBalance) errors.amount = `Payment cannot exceed ${moneyLabel(remainingBalance)} remaining on this purchase.`;
+      }
     }
   }
   if (submitShape === "invoice" && mode === "create" && !form.productId) errors.productId = "Choose a product for this invoice.";
+  if (endpoint.includes("/invoices") && mode === "edit") {
+    const customerId = form.customerId || null;
+    const total = Number(form.total || 0);
+    const paidAmount = Math.min(Number(form.paidAmount || 0), total);
+    const status = form.status === "DRAFT" ? "DRAFT" : paidAmount >= total ? "PAID" : paidAmount > 0 ? "PARTIAL" : "UNPAID";
+    if (walkInInvoiceHasDue(customerId, total, paidAmount, status)) {
+      errors.paidAmount = WALK_IN_PAYMENT_REQUIRED_MESSAGE;
+    }
+  }
   if (submitShape === "purchase" && mode === "create" && !form.productId) errors.productId = "Choose a product for this purchase.";
+  if (submitShape === "purchase" && mode === "create" && !form.supplierId) errors.supplierId = "Choose a supplier for this purchase.";
   return errors;
 }
 
@@ -295,6 +341,115 @@ function detailItems(row: any, fields: Field[], columns: Column[]) {
     .map((item) => ({ ...item, value: formatDetailValue(row[item.key]) }));
 }
 
+function moneyLabel(value: unknown) {
+  return `PKR ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+type InvoiceDetailLine = {
+  id: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  discount: number;
+  tax: number;
+  total: number;
+};
+
+function invoiceLineRows(invoice: any): InvoiceDetailLine[] {
+  const items = Array.isArray(invoice?.items) ? invoice.items : [];
+  const grossTotal = items.reduce((sum: number, item: any) => sum + Number(item.total || 0), 0) || Number(invoice?.subtotal || 0) || 1;
+  const discountTotal = Number(invoice?.discount || 0) + Number(invoice?.loyaltyDiscount || 0);
+  const taxTotal = Number(invoice?.tax || 0);
+
+  return items.map((item: any) => {
+    const lineBase = Number(item.total || 0);
+    const share = lineBase > 0 ? lineBase / grossTotal : 0;
+    const lineDiscount = discountTotal > 0 ? discountTotal * share : 0;
+    const lineTax = taxTotal > 0 ? taxTotal * share : 0;
+    return {
+      id: item.id,
+      productName: item.product?.name || item.productName || "Product",
+      quantity: Number(item.quantity || 0),
+      unitPrice: Number(item.unitPrice || 0),
+      discount: lineDiscount,
+      tax: lineTax,
+      total: Math.max(lineBase - lineDiscount + lineTax, 0)
+    };
+  });
+}
+
+function InvoiceDetailBreakdown({ invoice }: { invoice: any }) {
+  const rows = invoiceLineRows(invoice);
+  if (!rows.length) return null;
+  const discountTotal = Number(invoice.discount || 0) + Number(invoice.loyaltyDiscount || 0);
+
+  return (
+    <div className="invoice-detail-section">
+      <div className="invoice-detail-header">
+        <div>
+          <span>Purchased items</span>
+          <strong>{rows.length.toLocaleString()} {rows.length === 1 ? "product" : "products"}</strong>
+        </div>
+        {discountTotal > 0 || Number(invoice.tax || 0) > 0 ? <p>Invoice discount and tax are distributed across item lines.</p> : null}
+      </div>
+      <div className="invoice-detail-table-wrap">
+        <table className="invoice-detail-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Unit price</th>
+              <th>Discount</th>
+              <th>Tax</th>
+              <th>Line total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item) => (
+              <tr key={item.id}>
+                <td>{item.productName}</td>
+                <td>{item.quantity.toLocaleString()}</td>
+                <td>{moneyLabel(item.unitPrice)}</td>
+                <td>{item.discount > 0 ? moneyLabel(item.discount) : "-"}</td>
+                <td>{item.tax > 0 ? moneyLabel(item.tax) : "-"}</td>
+                <td>{moneyLabel(item.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="invoice-detail-totals">
+        <div><span>Subtotal</span><strong>{moneyLabel(invoice.subtotal)}</strong></div>
+        <div><span>Discount</span><strong>{discountTotal > 0 ? moneyLabel(discountTotal) : "-"}</strong></div>
+        <div><span>Tax</span><strong>{Number(invoice.tax || 0) > 0 ? moneyLabel(invoice.tax) : "-"}</strong></div>
+        <div><span>Paid amount</span><strong>{moneyLabel(invoice.paidAmount)}</strong></div>
+        <div><span>Remaining balance</span><strong>{moneyLabel(invoice.dueAmount)}</strong></div>
+        <div><span>Grand total</span><strong>{moneyLabel(invoice.total)}</strong></div>
+        <div><span>Payment status</span><Badge variant={statusVariant(String(invoice.status || "UNPAID"))}>{String(invoice.status || "UNPAID").toLowerCase()}</Badge></div>
+      </div>
+    </div>
+  );
+}
+
+function PaymentInvoiceContext({ meta }: { meta: Record<string, any> }) {
+  return (
+    <div className="payment-invoice-context">
+      <div className="payment-invoice-context-heading">
+        <span>Invoice context</span>
+        <strong>{meta.invoiceNo || "Selected invoice"}</strong>
+      </div>
+      <div className="payment-invoice-context-grid">
+        <div><span>Customer</span><strong>{meta.customerName || "Walk-in"}</strong></div>
+        <div><span>Invoice total</span><strong>{moneyLabel(meta.total)}</strong></div>
+        <div><span>Already paid</span><strong>{moneyLabel(meta.paidAmount)}</strong></div>
+        <div><span>Remaining balance</span><strong>{moneyLabel(meta.remainingBalance)}</strong></div>
+        <div><span>Status</span><Badge variant={statusVariant(String(meta.status || "UNPAID"))}>{String(meta.status || "UNPAID").toLowerCase()}</Badge></div>
+        <div className="payment-invoice-context-products"><span>Products</span><strong>{meta.itemsSummary || "No item summary available"}</strong></div>
+      </div>
+    </div>
+  );
+}
+
 export function CrudManager({
   title,
   description,
@@ -346,6 +501,11 @@ export function CrudManager({
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const dialogOpen = mode !== "closed" || Boolean(detailRow) || Boolean(deleteRow);
+  const showInvoiceBreakdown = Boolean(detailRow?.invoiceNo && Array.isArray(detailRow?.items));
+  const selectedPaymentInvoice = useMemo(() => {
+    if (!endpoint.includes("/payments") || mode === "closed" || !form.invoiceId) return null;
+    return fields.find((field) => field.key === "invoiceId")?.options?.find((option) => option.value === form.invoiceId)?.meta || null;
+  }, [endpoint, fields, form.invoiceId, mode]);
   const singleCardMode = displayMode === "single-card";
   const activeFields = useMemo(() => fields.filter((field) => (mode === "edit" ? !field.hideOnEdit : !field.hideOnCreate)), [fields, mode]);
   const detailList = useMemo(() => detailRow ? detailItems(detailRow, fields, columns) : [], [columns, detailRow, fields]);
@@ -574,7 +734,22 @@ export function CrudManager({
   }, [dialogOpen, modalClosing]);
 
   function updateField(key: string, value: unknown) {
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm((current) => {
+      if (endpoint.includes("/payments") && key === "invoiceId") {
+        const invoiceOption = fields.find((field) => field.key === "invoiceId")?.options?.find((option) => option.value === value);
+        const meta = invoiceOption?.meta;
+        if (!value) return { ...current, invoiceId: "", customerId: "" };
+        return {
+          ...current,
+          invoiceId: value,
+          direction: "CUSTOMER_IN",
+          customerId: meta?.customerId || "",
+          amount: mode === "create" && Number(meta?.remainingBalance || 0) > 0 ? meta?.remainingBalance : current.amount,
+          reference: current.reference || meta?.invoiceNo || ""
+        };
+      }
+      return { ...current, [key]: value };
+    });
     setFieldErrors((current) => {
       if (!current[key]) return current;
       const next = { ...current };
@@ -595,6 +770,13 @@ export function CrudManager({
       window.setTimeout(() => (document.getElementsByName(firstKey)[0] as HTMLElement | undefined)?.focus(), 0);
       return;
     }
+    
+    if (form.salePrice !== undefined && form.costPrice !== undefined) {
+      if (Number(form.salePrice) < Number(form.costPrice)) {
+        toast.warning("Warning: Sale price is set lower than cost price.");
+      }
+    }
+    
     setLoading(true);
     setMessage(null);
     setFieldErrors({});
@@ -611,6 +793,7 @@ export function CrudManager({
               tax: basePayload.tax,
               loyaltyDiscount: basePayload.loyaltyDiscount,
               paidAmount: basePayload.paidAmount,
+              paymentMethod: basePayload.paymentMethod || "CASH",
               cashierCounter: basePayload.cashierCounter,
               channel: basePayload.channel,
               promoCode: basePayload.promoCode,
@@ -817,7 +1000,7 @@ export function CrudManager({
           <div className="crud-modal-layer" data-state={modalClosing ? "closing" : "open"} role="presentation">
             <button type="button" className="crud-modal-backdrop" data-state={modalClosing ? "closing" : "open"} aria-label="Close dialog" onClick={closeDialog} />
             <div
-              className={cn("crud-modal motion-modal", mode === "closed" && detailRow && "crud-modal-details", deleteRow && "crud-modal-confirm")}
+              className={cn("crud-modal motion-modal", mode === "closed" && detailRow && "crud-modal-details", showInvoiceBreakdown && "crud-modal-invoice-details", deleteRow && "crud-modal-confirm")}
               data-state={modalClosing ? "closing" : "open"}
               style={modalMotionStyle(modalOrigin)}
               role="dialog"
@@ -841,6 +1024,18 @@ export function CrudManager({
                       {activeFields.map((field) => {
                         const error = fieldErrors[field.key];
                         const min = field.min ?? (isNonNegativeNumberField(field) ? 0 : undefined);
+                        const fieldLockedByInvoice = endpoint.includes("/payments") && field.key === "customerId" && Boolean(form.invoiceId);
+                        
+                        if (field.showIf && !field.showIf(form)) return null;
+                        if (field.showWhen) {
+                          const currentValue = form[field.showWhen.key];
+                          const isVisible = field.showWhen.truthy
+                            ? Boolean(currentValue)
+                            : field.showWhen.equals === undefined
+                              ? Boolean(currentValue)
+                              : currentValue === field.showWhen.equals;
+                          if (!isVisible) return null;
+                        }
 
                         return (
                           <label
@@ -861,6 +1056,7 @@ export function CrudManager({
                                 aria-invalid={Boolean(error)}
                                 aria-describedby={error ? `${field.key}-error` : undefined}
                                 autoComplete={autoCompleteFor(field)}
+                                readOnly={field.readOnly}
                               />
                             ) : field.type === "select" ? (
                               <select
@@ -870,14 +1066,26 @@ export function CrudManager({
                                 aria-invalid={Boolean(error)}
                                 aria-describedby={error ? `${field.key}-error` : undefined}
                                 className="form-select"
+                                disabled={fieldLockedByInvoice || field.readOnly}
                               >
-                                <option value="">Select {field.label}</option>
+                                <option value="">{endpoint.includes("/invoices") && field.key === "customerId" ? "Walk-in customer (paid on spot)" : `Select ${field.label}`}</option>
                                 {field.options?.map((option) => (
                                   <option key={option.value} value={option.value}>
                                     {option.label}
                                   </option>
                                 ))}
                               </select>
+                            ) : field.type === "checkbox" ? (
+                              <div className="flex h-10 items-center">
+                                <input
+                                  type="checkbox"
+                                  name={field.key}
+                                  checked={Boolean(form[field.key])}
+                                  onChange={(event) => updateField(field.key, event.target.checked)}
+                                  disabled={field.readOnly}
+                                  className="size-5 rounded border-input bg-background accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                />
+                              </div>
                             ) : (
                               <Input
                                 name={field.key}
@@ -892,13 +1100,16 @@ export function CrudManager({
                                 step={field.step ?? (field.type === "number" ? "any" : undefined)}
                                 inputMode={inputModeFor(field)}
                                 autoComplete={autoCompleteFor(field)}
+                                readOnly={field.readOnly}
                               />
                             )}
                             {error ? <span id={`${field.key}-error`} className="crud-field-error">{error}</span> : null}
+                            {fieldLockedByInvoice ? <span className="text-xs leading-5 text-muted-foreground">Invoice-linked payments use the invoice customer automatically.</span> : null}
                           </label>
                         );
                       })}
                     </div>
+                    {selectedPaymentInvoice ? <PaymentInvoiceContext meta={selectedPaymentInvoice} /> : null}
                   </div>
                   <div className="crud-modal-footer">
                     <Button disabled={loading} className="w-full sm:w-auto">
@@ -944,6 +1155,7 @@ export function CrudManager({
                         </div>
                       ))}
                     </div>
+                    {showInvoiceBreakdown ? <InvoiceDetailBreakdown invoice={detailRow} /> : null}
                   </div>
                 </section>
               ) : null}

@@ -3,6 +3,7 @@ import { CrudManager } from "@/components/workspace/crud-manager";
 import { MetricCard } from "@/components/workspace/metric-card";
 import { ModuleHero, ModuleInsightPanel } from "@/components/workspace/module-hero";
 import { PurchaseFlow } from "@/components/workspace/purchase-flow";
+import { SupplierPaymentFlow } from "@/components/workspace/supplier-payment-flow";
 import { SectionHeader } from "@/components/workspace/section-header";
 import { getCurrentUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
@@ -18,6 +19,7 @@ export default async function Purchases({ searchParams }: { searchParams?: Table
   const user = await getCurrentUser();
   const table = readTableState(searchParams);
   const purchaseFilters: any[] = [];
+  purchaseFilters.push({ status: { notIn: ["PAYMENT_OUT", "REFUND_IN"] } });
   if (table.query) {
     purchaseFilters.push({
       OR: [
@@ -32,12 +34,13 @@ export default async function Purchases({ searchParams }: { searchParams?: Table
   const purchaseDateRange = dateRange("purchaseDate", table.dateFrom, table.dateTo);
   if (purchaseDateRange) purchaseFilters.push(purchaseDateRange);
   const purchaseWhere = { shopId: user!.shopId, ...(purchaseFilters.length ? { AND: purchaseFilters } : {}) };
-  const [purchasesRaw, purchasesTotal, purchaseMetrics, suppliersRaw, productsRaw] = await Promise.all([
+  const [purchasesRaw, purchasesTotal, purchaseMetrics, suppliersRaw, productsRaw, openPurchasesRaw] = await Promise.all([
     prisma.purchase.findMany({ where: purchaseWhere, include: { supplier: true, _count: { select: { items: true } } }, orderBy: { purchaseDate: "desc" }, skip: table.skip, take: table.take }),
     prisma.purchase.count({ where: purchaseWhere }),
-    prisma.purchase.aggregate({ where: { shopId: user!.shopId }, _sum: { total: true, dueAmount: true }, _count: true }),
-    prisma.supplier.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } }),
-    prisma.product.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } })
+    prisma.purchase.aggregate({ where: { shopId: user!.shopId, status: { notIn: ["PAYMENT_OUT", "REFUND_IN"] } }, _sum: { total: true, dueAmount: true }, _count: true }),
+    prisma.supplier.findMany({ where: { shopId: user!.shopId, status: "ACTIVE" }, orderBy: { name: "asc" } }),
+    prisma.product.findMany({ where: { shopId: user!.shopId }, orderBy: { name: "asc" } }),
+    prisma.purchase.findMany({ where: { shopId: user!.shopId, status: { notIn: ["CANCELLED", "PAYMENT_OUT", "REFUND_IN"] }, dueAmount: { gt: 0 }, supplierId: { not: null } }, include: { supplier: true }, orderBy: { purchaseDate: "desc" }, take: 250 })
   ]);
   const purchases = toPlain(purchasesRaw).map((purchase: any) => ({
     ...purchase,
@@ -49,6 +52,14 @@ export default async function Purchases({ searchParams }: { searchParams?: Table
   }));
   const suppliers = toPlain(suppliersRaw);
   const products = toPlain(productsRaw);
+  const openPurchases = toPlain(openPurchasesRaw).map((purchase: any) => ({
+    id: purchase.id,
+    purchaseNo: purchase.purchaseNo,
+    supplierId: purchase.supplierId,
+    supplierName: purchase.supplier?.name || "Supplier",
+    dueAmount: Number(purchase.dueAmount || 0),
+    total: Number(purchase.total || 0)
+  }));
   const total = Number(purchaseMetrics._sum.total || 0);
   const due = Number(purchaseMetrics._sum.dueAmount || 0);
   const purchaseCount = purchaseMetrics._count;
@@ -105,10 +116,10 @@ export default async function Purchases({ searchParams }: { searchParams?: Table
           submitShape="purchase"
           fields={[
             { key: "purchaseNo", label: "Purchase number" },
-            { key: "supplierId", label: "Supplier", type: "select", options: suppliers.map((supplier: any) => ({ label: supplier.name, value: supplier.id })) },
+            { key: "supplierId", label: "Supplier", type: "select", required: true, options: suppliers.map((supplier: any) => ({ label: supplier.name, value: supplier.id })) },
             { key: "productId", label: "Product", type: "select", required: true, hideOnEdit: true, options: products.map((product: any) => ({ label: product.name, value: product.id })) },
             { key: "quantity", label: "Quantity", type: "number", required: true, hideOnEdit: true },
-            { key: "unitCost", label: "Unit cost", type: "number", required: true, hideOnEdit: true },
+            { key: "unitCost", label: "Unit cost", type: "number", hideOnEdit: true },
             { key: "paidAmount", label: "Paid amount", type: "number" },
             { key: "total", label: "Total", type: "number", hideOnCreate: true },
             { key: "status", label: "Status", type: "select", hideOnCreate: true, options: [{ label: "Ordered", value: "ORDERED" }, { label: "Received", value: "RECEIVED" }, { label: "Partial", value: "PARTIAL" }, { label: "Cancelled", value: "CANCELLED" }] },
@@ -124,7 +135,12 @@ export default async function Purchases({ searchParams }: { searchParams?: Table
             { key: "status", label: "Status" }
           ]}
           canCreate={canCreatePurchase}
-          createAction={<PurchaseFlow suppliers={suppliers} products={products} canCreate={canCreatePurchase} />}
+          createAction={
+            <div className="flex gap-2">
+              <SupplierPaymentFlow suppliers={suppliers} purchases={openPurchases} canCreate={canCreatePurchase} />
+              <PurchaseFlow suppliers={suppliers} products={products} canCreate={canCreatePurchase} />
+            </div>
+          }
           canUpdate={can(user?.role, "purchases", "update")}
           canDelete={can(user?.role, "purchases", "delete")}
           createLabel="Create purchase"

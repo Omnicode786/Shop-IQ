@@ -20,6 +20,8 @@ type ProductOption = {
   id: string;
   name: string;
   unit?: string | null;
+  packUnit?: string | null;
+  packSize?: number | null;
   costPrice: number | string;
 };
 
@@ -38,6 +40,7 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
   const originElementRef = useRef<Element | null>(null);
   const closeFromKeyboardRef = useRef<() => void>(() => {});
   const [createSupplier, setCreateSupplier] = useState(false);
+  const [receiveMode, setReceiveMode] = useState<"base" | "pack">("base");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -55,7 +58,7 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
   const selectedProduct = useMemo(() => products.find((product) => product.id === form.productId), [form.productId, products]);
   const quantity = Math.max(1, Number(form.quantity || 1));
   const suggestedCost = selectedProduct ? Number(selectedProduct.costPrice || 0) : 0;
-  const unitCost = Math.max(0, Number(form.unitCost || suggestedCost || 0));
+  const unitCost = Math.max(0, Number(form.unitCost || 0) || suggestedCost);
   const total = unitCost * quantity;
   const paid = Math.min(Math.max(0, Number(form.paidAmount || 0)), total);
   const due = Math.max(0, total - paid);
@@ -76,8 +79,16 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
   }, []);
 
   useEffect(() => {
-    if (selectedProduct && !form.unitCost) setForm((current) => ({ ...current, unitCost: String(Number(selectedProduct.costPrice || 0)) }));
+    if (selectedProduct && !form.unitCost) {
+      setForm((current) => ({ ...current, unitCost: String(Number(selectedProduct.costPrice || 0)) }));
+    }
   }, [form.unitCost, selectedProduct]);
+
+  useEffect(() => {
+    if (selectedProduct && !selectedProduct.packSize) {
+      setReceiveMode("base");
+    }
+  }, [selectedProduct]);
 
   function resetForm() {
     setCreateSupplier(false);
@@ -163,8 +174,8 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
       stopWithMessage("Enter the new supplier name or switch back to selecting a supplier.");
       return;
     }
-    if (due > 0 && !createSupplier && !form.supplierId) {
-      stopWithMessage("Choose or create a supplier when any purchase amount will remain due.");
+    if (!createSupplier && !form.supplierId) {
+      stopWithMessage("Choose or create a supplier before receiving stock.");
       return;
     }
 
@@ -191,6 +202,9 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
         toast.success("Supplier created successfully.");
       }
 
+      const finalQuantity = receiveMode === "pack" ? quantity * (selectedProduct?.packSize || 1) : quantity;
+      const finalUnitCost = receiveMode === "pack" ? unitCost / (selectedProduct?.packSize || 1) : unitCost;
+
       const purchaseResponse = await fetch("/api/purchases", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -198,7 +212,7 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
           supplierId,
           paidAmount: paid,
           notes: form.notes,
-          items: [{ productId: form.productId, quantity, unitCost }]
+          items: [{ productId: form.productId, quantity: finalQuantity, unitCost: finalUnitCost }]
         }),
         cache: "no-store"
       });
@@ -271,7 +285,7 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
                       <label className="crud-field">
                         <span className="crud-field-label">Supplier</span>
                         <select className="form-select" value={form.supplierId} onChange={(event) => update("supplierId", event.target.value)}>
-                          <option value="">General cash purchase</option>
+                          <option value="">Select supplier</option>
                           {suppliers.map((supplier) => (
                             <option key={supplier.id} value={supplier.id}>{supplier.name}{supplier.phone ? ` - ${supplier.phone}` : ""}</option>
                           ))}
@@ -285,6 +299,12 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
                       <PackagePlus className="size-4" />
                       <span>Stock intake</span>
                     </div>
+                    {selectedProduct?.packSize ? (
+                      <div className="billing-toggle mb-3">
+                        <button type="button" data-active={receiveMode === "base" || undefined} onClick={() => setReceiveMode("base")}>Base units ({selectedProduct.unit || "pcs"})</button>
+                        <button type="button" data-active={receiveMode === "pack" || undefined} onClick={() => setReceiveMode("pack")}>Packs ({selectedProduct.packUnit || "Box"} of {selectedProduct.packSize})</button>
+                      </div>
+                    ) : null}
                     <div className="grid gap-3 sm:grid-cols-[1.4fr_0.6fr_0.7fr]">
                       <label className="crud-field">
                         <span className="crud-field-label">Product <i aria-hidden="true">*</i></span>
@@ -296,11 +316,11 @@ export function PurchaseFlow({ suppliers, products, canCreate }: { suppliers: Su
                         </select>
                       </label>
                       <label className="crud-field">
-                        <span className="crud-field-label">Quantity</span>
+                        <span className="crud-field-label">{receiveMode === "pack" ? "Packs qty" : "Quantity"}</span>
                         <Input type="number" min={1} value={form.quantity} onChange={(event) => update("quantity", event.target.value)} />
                       </label>
                       <label className="crud-field">
-                        <span className="crud-field-label">Unit cost</span>
+                        <span className="crud-field-label">{receiveMode === "pack" ? "Cost per pack" : "Unit cost"}</span>
                         <Input type="number" min={0} value={form.unitCost} onChange={(event) => update("unitCost", event.target.value)} />
                       </label>
                     </div>

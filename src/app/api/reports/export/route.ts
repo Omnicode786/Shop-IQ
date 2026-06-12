@@ -39,7 +39,7 @@ async function salesSummaryForPdf(shopId: string, startDate: Date | null, endDat
       orderBy: { invoiceDate: "asc" }
     }),
     prisma.payment.findMany({
-      where: { shopId, direction: "CUSTOMER_IN", paidAt: { gte: start, lte: end } },
+      where: { shopId, direction: "CUSTOMER_IN", status: "ACTIVE", paidAt: { gte: start, lte: end } },
       orderBy: { paidAt: "asc" }
     })
   ]);

@@ -5,6 +5,10 @@ import type { Content, FunctionCall, FunctionDeclaration } from "@google/genai";
 import type { UserRole } from "@prisma/client";
 import { runGeminiToolTurn } from "@/lib/ai";
 import { getDashboardSnapshot } from "@/lib/data";
+import { WALK_IN_PAYMENT_REQUIRED_MESSAGE, walkInInvoiceHasDue } from "@/lib/invoice-rules";
+import { decrementStockForSale, lockActiveProductsForSale } from "@/lib/invoice-stock";
+import { applyPaymentEffect as applyLedgerPaymentEffect, isDuplicatePaymentReferenceError, paymentInclude, resolvePaymentLinks as resolveLedgerPaymentLinks } from "@/lib/payment-ledger";
+import { syncAutomaticInvoicePayment } from "@/lib/payment-workflow";
 import { prisma } from "@/lib/prisma";
 import { buildReportDownloadUrl, normalizeReportType, reportFileSlug, reportLabel, reportRangeLabel, REPORT_TYPE_VALUES } from "@/lib/report-config";
 import {
@@ -16,6 +20,7 @@ import {
   type CrudAction,
   type PermissionResource
 } from "@/lib/permissions";
+import { syncAutomaticPurchasePayment } from "@/lib/supplier-payment-workflow";
 import {
   clamp,
   intQty,
@@ -107,6 +112,8 @@ const productCreateSchema = z.object({
   barcode: optionalText(80),
   brand: optionalText(120),
   unit: optionalText(40).default("pcs"),
+  packUnit: optionalText(40),
+  packSize: z.coerce.number().int().min(1).optional().nullable(),
   costPrice: money,
   salePrice: money,
   stockQty: intQty,
@@ -125,6 +132,8 @@ const productUpdateSchema = z.object({
     barcode: nullableText(80),
     brand: nullableText(120),
     unit: optionalText(40),
+    packUnit: nullableText(40),
+    packSize: z.coerce.number().int().min(1).optional().nullable(),
     costPrice: money.optional(),
     salePrice: money.optional(),
     stockQty: intQty.optional(),
@@ -132,7 +141,8 @@ const productUpdateSchema = z.object({
     reorderQuantity: intQty.optional(),
     location: nullableText(120),
     categoryId: nullableId,
-    categoryName: nullableText(80)
+    categoryName: nullableText(80),
+    status: z.enum(["ACTIVE", "ARCHIVED"]).optional()
   }).refine((value) => Object.values(value).some((item) => item !== undefined), "Add at least one product field to update.")
 });
 
@@ -142,7 +152,8 @@ const customerCreateSchema = z.object({
   email: optionalEmail,
   address: optionalText(220),
   creditLimit: money,
-  balance: money.optional(),
+  openingBalance: money.optional(),
+  status: z.enum(["ACTIVE", "INACTIVE"]).default("ACTIVE"),
   notes: optionalText(600)
 });
 
@@ -154,9 +165,13 @@ const customerUpdateSchema = z.object({
     email: nullableEmail,
     address: nullableText(220),
     creditLimit: money.optional(),
-    balance: money.optional(),
+    balanceAdjustment: money.optional(),
+    balanceAdjustmentReason: optionalText(100),
+    balanceAdjustmentNote: optionalText(600),
+    status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
     notes: nullableText(600)
   }).refine((value) => Object.values(value).some((item) => item !== undefined), "Add at least one customer field to update.")
+    .refine((value) => !value.balanceAdjustment || value.balanceAdjustment === 0 || Boolean(value.balanceAdjustmentReason), "A reason is required when adjusting the balance.")
 });
 
 const supplierCreateSchema = z.object({
@@ -164,7 +179,8 @@ const supplierCreateSchema = z.object({
   phone: optionalText(40),
   email: optionalEmail,
   address: optionalText(220),
-  balance: money.optional(),
+  openingBalance: money.optional(),
+  status: z.enum(["ACTIVE", "INACTIVE"]).default("ACTIVE"),
   reliabilityScore: z.coerce.number().int().min(0).max(100).default(80),
   notes: optionalText(600)
 });
@@ -176,10 +192,14 @@ const supplierUpdateSchema = z.object({
     phone: nullableText(40),
     email: nullableEmail,
     address: nullableText(220),
-    balance: money.optional(),
+    balanceAdjustment: money.optional(),
+    balanceAdjustmentReason: optionalText(100),
+    balanceAdjustmentNote: optionalText(600),
+    status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
     reliabilityScore: z.coerce.number().int().min(0).max(100).optional(),
     notes: nullableText(600)
   }).refine((value) => Object.values(value).some((item) => item !== undefined), "Add at least one supplier field to update.")
+    .refine((value) => !value.balanceAdjustment || value.balanceAdjustment === 0 || Boolean(value.balanceAdjustmentReason), "A reason is required when adjusting the supplier balance.")
 });
 
 const paymentCreateSchema = z.object({
@@ -188,10 +208,10 @@ const paymentCreateSchema = z.object({
   amount: positiveMoney,
   customerId: optionalId,
   customerName: optionalText(160),
-  supplierId: optionalId,
-  supplierName: optionalText(160),
   invoiceId: optionalId,
   invoiceNo: optionalText(80),
+  supplierId: optionalId,
+  supplierName: optionalText(160),
   purchaseId: optionalId,
   purchaseNo: optionalText(80),
   paidAt: z.coerce.date().optional(),
@@ -214,6 +234,7 @@ const invoiceCreateSchema = z.object({
   discount: money,
   tax: money,
   paidAmount: money,
+  paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "CARD", "JAZZCASH", "EASYPAISA", "CHEQUE", "OTHER"]).default("CASH"),
   dueDate: z.coerce.date().optional(),
   notes: optionalText(600),
   items: z.array(invoiceItemSchema).min(1, "Add at least one invoice item.")
@@ -486,12 +507,12 @@ async function resolveCustomerId(shopId: string, customerId?: string | null, cus
 
 async function resolveSupplierId(shopId: string, supplierId?: string | null, supplierName?: string | null) {
   if (supplierId) {
-    const supplier = await prisma.supplier.findFirst({ where: { id: supplierId, shopId }, select: { id: true, name: true } });
+    const supplier = await prisma.supplier.findFirst({ where: { id: supplierId, shopId, status: "ACTIVE" }, select: { id: true, name: true } });
     if (!supplier) throw new Error("Supplier not found.");
     return supplier.id;
   }
   if (!supplierName) return null;
-  const supplier = await prisma.supplier.findFirst({ where: { shopId, name: contains(supplierName) }, orderBy: { updatedAt: "desc" }, select: { id: true, name: true } });
+  const supplier = await prisma.supplier.findFirst({ where: { shopId, status: "ACTIVE", name: contains(supplierName) }, orderBy: { updatedAt: "desc" }, select: { id: true, name: true } });
   if (!supplier) throw new Error(`Supplier "${supplierName}" was not found. Search suppliers first or provide supplierId.`);
   return supplier.id;
 }
@@ -535,77 +556,37 @@ async function resolveStockAdjustment(user: AgentUser, data: z.infer<typeof stoc
   return { product, beforeQty: product.stockQty, afterQty, movementQuantity };
 }
 
-async function resolvePaymentLinks(shopId: string, payment: z.infer<typeof paymentCreateSchema>) {
-  const next = {
-    ...payment,
-    customerId: payment.customerId || null,
-    supplierId: payment.supplierId || null,
-    invoiceId: payment.invoiceId || null,
-    purchaseId: payment.purchaseId || null
-  };
-
+async function resolveAiPaymentLinks(shopId: string, payment: z.infer<typeof paymentCreateSchema>) {
+  const next: any = { ...payment };
   if (!next.invoiceId && next.invoiceNo) {
     const invoice = await prisma.invoice.findFirst({ where: { shopId, invoiceNo: next.invoiceNo }, select: { id: true, customerId: true } });
     if (!invoice) throw new Error("Invoice not found.");
     next.invoiceId = invoice.id;
     next.customerId = next.customerId || invoice.customerId || null;
   }
+  if (!next.customerId && next.customerName) next.customerId = await resolveCustomerId(shopId, undefined, next.customerName);
   if (!next.purchaseId && next.purchaseNo) {
-    const purchase = await prisma.purchase.findFirst({ where: { shopId, purchaseNo: next.purchaseNo }, select: { id: true, supplierId: true } });
+    const purchase = await prisma.purchase.findFirst({ where: { shopId, purchaseNo: next.purchaseNo, status: { not: "CANCELLED" } }, select: { id: true, supplierId: true } });
     if (!purchase) throw new Error("Purchase not found.");
     next.purchaseId = purchase.id;
     next.supplierId = next.supplierId || purchase.supplierId || null;
   }
-  if (next.invoiceId) {
-    const invoice = await prisma.invoice.findFirst({ where: { id: next.invoiceId, shopId }, select: { id: true, customerId: true } });
-    if (!invoice) throw new Error("Invoice not found.");
-    next.customerId = next.customerId || invoice.customerId || null;
-  }
-  if (next.purchaseId) {
-    const purchase = await prisma.purchase.findFirst({ where: { id: next.purchaseId, shopId }, select: { id: true, supplierId: true } });
-    if (!purchase) throw new Error("Purchase not found.");
-    next.supplierId = next.supplierId || purchase.supplierId || null;
-  }
-  if (!next.customerId && next.customerName) next.customerId = await resolveCustomerId(shopId, undefined, next.customerName);
   if (!next.supplierId && next.supplierName) next.supplierId = await resolveSupplierId(shopId, undefined, next.supplierName);
-  if (next.direction === "CUSTOMER_IN" && !next.customerId && !next.invoiceId) throw new Error("Customer payments need a customer or invoice.");
-  if (next.direction === "SUPPLIER_OUT" && !next.supplierId && !next.purchaseId) throw new Error("Supplier payouts need a supplier or purchase.");
-  return next;
-}
-
-async function applyPaymentEffect(
-  tx: any,
-  shopId: string,
-  payment: { direction: string; amount: unknown; customerId?: string | null; supplierId?: string | null; invoiceId?: string | null; purchaseId?: string | null },
-  sign: 1 | -1
-) {
-  const amount = Number(payment.amount);
-  if (payment.direction === "CUSTOMER_IN") {
-    let customerId = payment.customerId || null;
-    if (payment.invoiceId) {
-      const invoice = await tx.invoice.findFirst({ where: { id: payment.invoiceId, shopId } });
-      if (invoice) {
-        customerId = customerId || invoice.customerId;
-        const paidAmount = Math.max(Number(invoice.paidAmount) + sign * amount, 0);
-        const dueAmount = Math.max(Number(invoice.total) - paidAmount, 0);
-        await tx.invoice.update({ where: { id: invoice.id }, data: { paidAmount, dueAmount, status: invoiceStatus(Number(invoice.total), paidAmount) } });
-      }
-    }
-    if (customerId) await tx.customer.update({ where: { id: customerId }, data: { balance: sign === 1 ? { decrement: amount } : { increment: amount } } });
-  }
-  if (payment.direction === "SUPPLIER_OUT") {
-    let supplierId = payment.supplierId || null;
-    if (payment.purchaseId) {
-      const purchase = await tx.purchase.findFirst({ where: { id: payment.purchaseId, shopId } });
-      if (purchase) {
-        supplierId = supplierId || purchase.supplierId;
-        const paidAmount = Math.max(Number(purchase.paidAmount) + sign * amount, 0);
-        const dueAmount = Math.max(Number(purchase.total) - paidAmount, 0);
-        await tx.purchase.update({ where: { id: purchase.id }, data: { paidAmount, dueAmount } });
-      }
-    }
-    if (supplierId) await tx.supplier.update({ where: { id: supplierId }, data: { balance: sign === 1 ? { decrement: amount } : { increment: amount } } });
-  }
+  const draft = {
+    direction: next.direction,
+    method: next.method,
+    amount: Number(next.amount),
+    customerId: next.customerId || null,
+    invoiceId: next.invoiceId || null,
+    supplierId: next.supplierId || null,
+    purchaseId: next.purchaseId || null,
+    paidAt: next.paidAt,
+    reference: next.reference,
+    notes: next.notes
+  };
+  const resolved = await resolveLedgerPaymentLinks(prisma, shopId, draft);
+  if (resolved.error || !resolved.payment) throw new Error(resolved.error);
+  return resolved.payment;
 }
 
 async function validateActionForPreview(user: AgentUser, action: AiActionType, parsed: any) {
@@ -631,23 +612,41 @@ async function validateActionForPreview(user: AgentUser, action: AiActionType, p
       const existing = await prisma.product.findFirst({ where: { shopId: user.shopId, sku }, select: { id: true } });
       if (existing) return `SKU "${sku}" already exists.`;
     }
+    if (parsed.barcode) {
+      const existingBarcode = await prisma.product.findFirst({ where: { shopId: user.shopId, barcode: parsed.barcode }, select: { id: true } });
+      if (existingBarcode) return "A product with this barcode already exists.";
+    }
     if (parsed.categoryId) await resolveCategoryId(user, parsed.categoryId, null);
   }
   if (action === "update_product") {
     const existing = await prisma.product.findFirst({ where: { id: parsed.id, shopId: user.shopId }, select: { id: true, stockQty: true } });
     if (!existing) return "Product not found.";
     if (parsed.changes.categoryId) await resolveCategoryId(user, parsed.changes.categoryId, null);
+    if (parsed.changes.barcode) {
+      const existingBarcode = await prisma.product.findFirst({ where: { shopId: user.shopId, barcode: parsed.changes.barcode, id: { not: parsed.id } }, select: { id: true } });
+      if (existingBarcode) return "A product with this barcode already exists.";
+    }
+  }
+  if (action === "create_customer") {
+    if (parsed.phone) {
+      const existingPhone = await prisma.customer.findFirst({ where: { shopId: user.shopId, phone: parsed.phone }, select: { id: true } });
+      if (existingPhone) return "A customer with this phone number already exists.";
+    }
   }
   if (action === "update_customer") {
     const existing = await prisma.customer.findFirst({ where: { id: parsed.id, shopId: user.shopId }, select: { id: true } });
     if (!existing) return "Customer not found.";
+    if (parsed.changes.phone) {
+      const existingPhone = await prisma.customer.findFirst({ where: { shopId: user.shopId, phone: parsed.changes.phone, id: { not: parsed.id } }, select: { id: true } });
+      if (existingPhone) return "A customer with this phone number already exists.";
+    }
   }
   if (action === "update_supplier") {
     const existing = await prisma.supplier.findFirst({ where: { id: parsed.id, shopId: user.shopId }, select: { id: true } });
     if (!existing) return "Supplier not found.";
   }
-  if (action === "create_payment" && !canUsePaymentDirection(user.role, parsed.direction)) {
-    return "Your role can record customer receipts only. Supplier payouts are admin/manager actions.";
+  if (action === "create_payment") {
+    if (!canUsePaymentDirection(user.role, parsed.direction)) return "Your role cannot record that payment direction.";
   }
   if (action === "create_staff" && !canCreateStaffRole(user.role, parsed.role)) {
     return "You cannot create a staff member with that role.";
@@ -663,10 +662,10 @@ async function validateActionForPreview(user: AgentUser, action: AiActionType, p
     if (parsed.changes.role !== undefined && !canCreateStaffRole(user.role, parsed.changes.role)) return "You cannot assign that role.";
   }
   if (action === "create_payment") {
-    await resolvePaymentLinks(user.shopId, parsed);
+    await resolveAiPaymentLinks(user.shopId, parsed);
   }
   if (action === "create_invoice") {
-    await resolveCustomerId(user.shopId, parsed.customerId, parsed.customerName);
+    const customerId = await resolveCustomerId(user.shopId, parsed.customerId, parsed.customerName);
     const resolvedItems = await Promise.all(parsed.items.map((item: any) => resolveProduct(user.shopId, item)));
     const demand = new Map<string, number>();
     for (const [index, product] of resolvedItems.entries()) demand.set(product.id, (demand.get(product.id) || 0) + parsed.items[index].quantity);
@@ -674,9 +673,22 @@ async function validateActionForPreview(user: AgentUser, action: AiActionType, p
       const product = resolvedItems.find((item) => item.id === productId)!;
       if (product.stockQty < quantity) return `${product.name} has only ${product.stockQty} in stock.`;
     }
+    const subtotal = parsed.items.reduce((sum: number, item: any, index: number) => sum + item.quantity * Number(item.unitPrice ?? resolvedItems[index].salePrice), 0);
+    const total = Math.max(subtotal - parsed.discount + parsed.tax, 0);
+    const paid = Math.min(parsed.paidAmount, total);
+    const due = Math.max(total - paid, 0);
+    if (walkInInvoiceHasDue(customerId, total, paid)) return WALK_IN_PAYMENT_REQUIRED_MESSAGE;
+    if (customerId && due > 0) {
+      const customer = await prisma.customer.findFirst({ where: { id: customerId, shopId: user.shopId }, select: { balance: true, creditLimit: true } });
+      if (!customer) return "Customer not found.";
+      if (Number(customer.creditLimit) > 0 && Number(customer.balance) + due > Number(customer.creditLimit)) {
+        return `Credit limit exceeded. The customer's balance is ${moneyLabel(customer.balance)} and their credit limit is ${moneyLabel(customer.creditLimit)}.`;
+      }
+    }
   }
   if (action === "create_purchase") {
-    await resolveSupplierId(user.shopId, parsed.supplierId, parsed.supplierName);
+    const supplierId = await resolveSupplierId(user.shopId, parsed.supplierId, parsed.supplierName);
+    if (!supplierId) return "A supplier is required before creating a purchase.";
     await Promise.all(parsed.items.map((item: any) => resolveProduct(user.shopId, item)));
   }
   if (action === "create_stock_adjustment") {
@@ -788,10 +800,10 @@ async function searchBusinessRecords(user: AgentUser, args: Record<string, unkno
     const records = await prisma.payment.findMany({
       where: {
         shopId: user.shopId,
-        ...(canUsePaymentDirection(user.role, "SUPPLIER_OUT") ? {} : { direction: "CUSTOMER_IN" as const }),
-        ...(search ? { OR: [{ reference: contains(search) }, { customer: { name: contains(search) } }, { supplier: { name: contains(search) } }] } : {})
+        status: "ACTIVE",
+        ...(search ? { OR: [{ reference: contains(search) }, { customer: { name: contains(search) } }] } : {})
       },
-      include: { customer: true, supplier: true, invoice: true, purchase: true },
+      include: { customer: true, invoice: true },
       orderBy: { paidAt: "desc" },
       take: limit
     });
@@ -818,25 +830,25 @@ async function getRecordDetails(user: AgentUser, args: Record<string, unknown>) 
     return { ok: Boolean(record), entity, record: serializable(record) };
   }
   if (entity === "customers") {
-    const record = await prisma.customer.findFirst({ where: { id, shopId: user.shopId }, include: { invoices: { orderBy: { invoiceDate: "desc" }, take: 12 }, payments: { orderBy: { paidAt: "desc" }, take: 12 } } });
+    const record = await prisma.customer.findFirst({ where: { id, shopId: user.shopId }, include: { invoices: { orderBy: { invoiceDate: "desc" }, take: 12 }, payments: { where: { status: "ACTIVE" }, orderBy: { paidAt: "desc" }, take: 12 } } });
     return { ok: Boolean(record), entity, record: serializable(record) };
   }
   if (entity === "suppliers") {
-    const record = await prisma.supplier.findFirst({ where: { id, shopId: user.shopId }, include: { purchases: { orderBy: { purchaseDate: "desc" }, take: 12 }, payments: { orderBy: { paidAt: "desc" }, take: 12 } } });
+    const record = await prisma.supplier.findFirst({ where: { id, shopId: user.shopId }, include: { purchases: { orderBy: { purchaseDate: "desc" }, take: 12 } } });
     return { ok: Boolean(record), entity, record: serializable(record) };
   }
   if (entity === "invoices") {
-    const record = await prisma.invoice.findFirst({ where: { id, shopId: user.shopId }, include: { customer: true, items: { include: { product: true } }, payments: { orderBy: { paidAt: "desc" } } } });
+    const record = await prisma.invoice.findFirst({ where: { id, shopId: user.shopId }, include: { customer: true, items: { include: { product: true } }, payments: { where: { status: "ACTIVE" }, orderBy: { paidAt: "desc" } } } });
     return { ok: Boolean(record), entity, record: serializable(record) };
   }
   if (entity === "purchases") {
-    const record = await prisma.purchase.findFirst({ where: { id, shopId: user.shopId }, include: { supplier: true, items: { include: { product: true } }, payments: { orderBy: { paidAt: "desc" } } } });
+    const record = await prisma.purchase.findFirst({ where: { id, shopId: user.shopId }, include: { supplier: true, items: { include: { product: true } } } });
     return { ok: Boolean(record), entity, record: serializable(record) };
   }
   if (entity === "payments") {
     const record = await prisma.payment.findFirst({
-      where: { id, shopId: user.shopId, ...(canUsePaymentDirection(user.role, "SUPPLIER_OUT") ? {} : { direction: "CUSTOMER_IN" as const }) },
-      include: { customer: true, supplier: true, invoice: true, purchase: true, createdBy: { select: selectStaff } }
+      where: { id, shopId: user.shopId },
+      include: { customer: true, invoice: true, createdBy: { select: selectStaff } }
     });
     return { ok: Boolean(record), entity, record: serializable(record) };
   }
@@ -880,6 +892,7 @@ async function getSalesSummary(user: AgentUser, args: Record<string, unknown>) {
       where: {
         shopId: user.shopId,
         direction: "CUSTOMER_IN",
+        status: "ACTIVE",
         paidAt: { gte: start, lte: end },
         ...(customerId ? { customerId } : {})
       },
@@ -1294,6 +1307,10 @@ async function executeCreateProduct(user: AgentUser, payload: unknown) {
   const sku = data.sku || `SKU-${Date.now()}`;
   const existing = await prisma.product.findFirst({ where: { shopId: user.shopId, sku }, select: { id: true } });
   if (existing) throw new Error(`SKU "${sku}" already exists.`);
+  if (data.barcode) {
+    const existingBarcode = await prisma.product.findFirst({ where: { shopId: user.shopId, barcode: data.barcode }, select: { id: true } });
+    if (existingBarcode) throw new Error("A product with this barcode already exists.");
+  }
   const product = await prisma.$transaction(async (tx) => {
     const created = await tx.product.create({
       data: {
@@ -1303,6 +1320,8 @@ async function executeCreateProduct(user: AgentUser, payload: unknown) {
         name: data.name,
         brand: data.brand,
         unit: data.unit || "pcs",
+        packUnit: data.packUnit,
+        packSize: data.packSize,
         costPrice: data.costPrice,
         salePrice: data.salePrice,
         stockQty: data.stockQty,
@@ -1333,8 +1352,24 @@ async function executeUpdateProduct(user: AgentUser, payload: unknown) {
   const categoryName = typeof updateData.categoryName === "string" ? updateData.categoryName : null;
   delete updateData.categoryName;
   if (categoryName || updateData.categoryId) updateData.categoryId = await resolveCategoryId(user, updateData.categoryId as string | undefined, categoryName);
+  if (typeof updateData.barcode === "string" && updateData.barcode) {
+    const existingBarcode = await prisma.product.findFirst({ where: { shopId: user.shopId, barcode: updateData.barcode, id: { not: data.id } }, select: { id: true } });
+    if (existingBarcode) throw new Error("A product with this barcode already exists.");
+  }
+
+  const futureStock = data.changes.stockQty !== undefined ? data.changes.stockQty : existing.stockQty;
+  if (updateData.status === "ARCHIVED" && existing.status !== "ARCHIVED" && futureStock > 0) {
+    throw new Error("Cannot archive a product that still has stock. Please adjust the stock to zero first.");
+  }
   const product = await prisma.$transaction(async (tx) => {
-    const updated = await tx.product.update({ where: { id: existing.id }, data: updateData, include: { category: true } });
+    let updated;
+    if (updateData.status === "ARCHIVED" && existing.status !== "ARCHIVED") {
+      const archiveResult = await tx.product.updateMany({ where: { id: existing.id, shopId: user.shopId, stockQty: 0 }, data: updateData });
+      if (!archiveResult.count) throw new Error("Cannot archive a product that still has stock. Please adjust the stock to zero first.");
+      updated = await tx.product.findUniqueOrThrow({ where: { id: existing.id }, include: { category: true } });
+    } else {
+      updated = await tx.product.update({ where: { id: existing.id }, data: updateData, include: { category: true } });
+    }
     if (data.changes.stockQty !== undefined && data.changes.stockQty !== existing.stockQty) {
       const delta = data.changes.stockQty - existing.stockQty;
       await tx.stockMovement.create({ data: { shopId: user.shopId, productId: existing.id, userId: user.id, type: "ADJUSTMENT", quantity: delta, beforeQty: existing.stockQty, afterQty: data.changes.stockQty, reference: "AI_PRODUCT_EDIT", notes: "Stock adjusted by ShopIQ AI after user confirmation." } });
@@ -1347,61 +1382,132 @@ async function executeUpdateProduct(user: AgentUser, payload: unknown) {
 
 async function executeCreateCustomer(user: AgentUser, payload: unknown) {
   const data = customerCreateSchema.parse(payload);
-  const customer = await prisma.customer.create({ data: { shopId: user.shopId, ...data } });
-  await prisma.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_CUSTOMER_CREATED", title: `AI created customer: ${customer.name}` } });
+  const { openingBalance, ...customerData } = data;
+  if (customerData.phone) {
+    const existingPhone = await prisma.customer.findFirst({ where: { shopId: user.shopId, phone: customerData.phone }, select: { id: true } });
+    if (existingPhone) throw new Error("A customer with this phone number already exists.");
+  }
+  const customer = await prisma.$transaction(async (tx) => {
+    const created = await tx.customer.create({ data: { shopId: user.shopId, ...customerData, balance: openingBalance || 0 } });
+    await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_CUSTOMER_CREATED", title: `AI created customer: ${created.name}` } });
+    if (openingBalance && openingBalance !== 0) {
+      await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "CUSTOMER_OPENING_BALANCE", title: `Opening balance set for ${created.name}`, details: `Amount: PKR ${openingBalance}` } });
+    }
+    return created;
+  });
   return { answer: `## Customer Created\n\n**${customer.name}** has been added to your customer list.`, action: { label: "Open Customers", href: workspacePath(user.role, "customers") } };
 }
 
 async function executeUpdateCustomer(user: AgentUser, payload: unknown) {
   const data = customerUpdateSchema.parse(payload);
-  const result = await prisma.customer.updateMany({ where: { id: data.id, shopId: user.shopId }, data: emptyToUndefined(data.changes) });
-  if (!result.count) throw new Error("Customer not found.");
-  const customer = await prisma.customer.findFirst({ where: { id: data.id, shopId: user.shopId } });
-  await prisma.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_CUSTOMER_UPDATED", title: `AI updated customer: ${customer?.name || data.id}` } });
-  return { answer: `## Customer Updated\n\n**${customer?.name || "Customer"}** has been updated.`, action: { label: "Open Customers", href: workspacePath(user.role, "customers") } };
+  const { balanceAdjustment, balanceAdjustmentReason, balanceAdjustmentNote, ...changes } = data.changes;
+  if (changes.phone) {
+    const existingPhone = await prisma.customer.findFirst({ where: { shopId: user.shopId, phone: changes.phone, id: { not: data.id } }, select: { id: true } });
+    if (existingPhone) throw new Error("A customer with this phone number already exists.");
+  }
+  const customer = await prisma.$transaction(async (tx) => {
+    const existing = await tx.customer.findFirst({ where: { id: data.id, shopId: user.shopId } });
+    if (!existing) throw new Error("Customer not found.");
+    const updated = await tx.customer.update({
+      where: { id: existing.id },
+      data: {
+        ...emptyToUndefined(changes),
+        ...(balanceAdjustment && balanceAdjustment !== 0 ? { balance: { increment: balanceAdjustment } } : {})
+      }
+    });
+    await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_CUSTOMER_UPDATED", title: `AI updated customer: ${updated.name}` } });
+    if (balanceAdjustment && balanceAdjustment !== 0) {
+      await tx.activityLog.create({
+        data: {
+          shopId: user.shopId,
+          userId: user.id,
+          type: "CUSTOMER_BALANCE_ADJUSTMENT",
+          title: `Balance adjusted for ${updated.name}`,
+          details: `${balanceAdjustmentReason} (Diff: ${balanceAdjustment > 0 ? "+" : ""}${balanceAdjustment})`,
+          metadata: { reason: balanceAdjustmentReason, note: balanceAdjustmentNote, delta: balanceAdjustment, beforeBalance: existing.balance, afterBalance: updated.balance }
+        }
+      });
+    }
+    return updated;
+  });
+  return { answer: `## Customer Updated\n\n**${customer.name}** has been updated.`, action: { label: "Open Customers", href: workspacePath(user.role, "customers") } };
 }
 
 async function executeCreateSupplier(user: AgentUser, payload: unknown) {
   const data = supplierCreateSchema.parse(payload);
-  const supplier = await prisma.supplier.create({ data: { shopId: user.shopId, ...data, reliabilityScore: clamp(data.reliabilityScore, 0, 100) } });
-  await prisma.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_SUPPLIER_CREATED", title: `AI created supplier: ${supplier.name}` } });
+  const { openingBalance, ...supplierData } = data;
+  const supplier = await prisma.$transaction(async (tx) => {
+    const created = await tx.supplier.create({ data: { shopId: user.shopId, ...supplierData, balance: openingBalance || 0, reliabilityScore: clamp(data.reliabilityScore, 0, 100) } });
+    await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_SUPPLIER_CREATED", title: `AI created supplier: ${created.name}` } });
+    if (openingBalance && openingBalance > 0) {
+      await tx.activityLog.create({
+        data: {
+          shopId: user.shopId,
+          userId: user.id,
+          type: "SUPPLIER_OPENING_BALANCE",
+          title: `Opening payable set for ${created.name}`,
+          details: `Amount: ${moneyLabel(openingBalance)}`,
+          metadata: { supplierId: created.id, openingBalance }
+        }
+      });
+    }
+    return created;
+  });
   return { answer: `## Supplier Created\n\n**${supplier.name}** has been added to your supplier list.`, action: { label: "Open Suppliers", href: workspacePath(user.role, "suppliers") } };
 }
 
 async function executeUpdateSupplier(user: AgentUser, payload: unknown) {
   const data = supplierUpdateSchema.parse(payload);
-  const changes = emptyToUndefined({ ...data.changes, reliabilityScore: data.changes.reliabilityScore === undefined ? undefined : clamp(data.changes.reliabilityScore, 0, 100) });
-  const result = await prisma.supplier.updateMany({ where: { id: data.id, shopId: user.shopId }, data: changes });
-  if (!result.count) throw new Error("Supplier not found.");
-  const supplier = await prisma.supplier.findFirst({ where: { id: data.id, shopId: user.shopId } });
-  await prisma.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_SUPPLIER_UPDATED", title: `AI updated supplier: ${supplier?.name || data.id}` } });
-  return { answer: `## Supplier Updated\n\n**${supplier?.name || "Supplier"}** has been updated.`, action: { label: "Open Suppliers", href: workspacePath(user.role, "suppliers") } };
+  const { balanceAdjustment, balanceAdjustmentReason, balanceAdjustmentNote, ...rawChanges } = data.changes;
+  const changes = emptyToUndefined({ ...rawChanges, reliabilityScore: rawChanges.reliabilityScore === undefined ? undefined : clamp(rawChanges.reliabilityScore, 0, 100) });
+  const supplier = await prisma.$transaction(async (tx) => {
+    const existing = await tx.supplier.findFirst({ where: { id: data.id, shopId: user.shopId } });
+    if (!existing) throw new Error("Supplier not found.");
+    const updated = await tx.supplier.update({
+      where: { id: existing.id },
+      data: {
+        ...changes,
+        ...(balanceAdjustment && balanceAdjustment !== 0 ? { balance: { increment: balanceAdjustment } } : {})
+      }
+    });
+    await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_SUPPLIER_UPDATED", title: `AI updated supplier: ${updated.name}` } });
+    if (balanceAdjustment && balanceAdjustment !== 0) {
+      await tx.activityLog.create({
+        data: {
+          shopId: user.shopId,
+          userId: user.id,
+          type: "SUPPLIER_BALANCE_ADJUSTMENT",
+          title: `Payable adjusted for ${updated.name}`,
+          details: `${balanceAdjustmentReason} (Diff: ${balanceAdjustment > 0 ? "+" : ""}${balanceAdjustment})`,
+          metadata: { reason: balanceAdjustmentReason, note: balanceAdjustmentNote, delta: balanceAdjustment, beforeBalance: existing.balance, afterBalance: updated.balance }
+        }
+      });
+    }
+    return updated;
+  });
+  return { answer: `## Supplier Updated\n\n**${supplier.name || "Supplier"}** has been updated.`, action: { label: "Open Suppliers", href: workspacePath(user.role, "suppliers") } };
 }
 
 async function executeCreatePayment(user: AgentUser, payload: unknown) {
   const data = paymentCreateSchema.parse(payload);
-  const resolved = await resolvePaymentLinks(user.shopId, data);
+  const resolved = await resolveAiPaymentLinks(user.shopId, data);
   const payment = await prisma.$transaction(async (tx) => {
-    const created = await tx.payment.create({
-      data: {
-        shopId: user.shopId,
-        createdById: user.id,
-        direction: resolved.direction,
-        method: resolved.method,
-        amount: resolved.amount,
-        customerId: resolved.customerId,
-        supplierId: resolved.supplierId,
-        invoiceId: resolved.invoiceId,
-        purchaseId: resolved.purchaseId,
-        paidAt: resolved.paidAt,
-        reference: resolved.reference,
-        notes: resolved.notes
-      },
-      include: { customer: true, supplier: true, invoice: true, purchase: true }
-    });
-    await applyPaymentEffect(tx, user.shopId, created, 1);
-    await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_PAYMENT_RECORDED", title: "AI recorded payment", details: `${moneyLabel(created.amount)} via ${created.method}` } });
-    return created;
+    try {
+      const created = await tx.payment.create({
+        data: {
+          shopId: user.shopId,
+          createdById: user.id,
+          ...resolved
+        },
+        include: paymentInclude
+      });
+      await applyLedgerPaymentEffect(tx, user.shopId, created, 1);
+      await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_PAYMENT_RECORDED", title: "AI recorded payment", details: `${moneyLabel(created.amount)} via ${created.method}` } });
+      return created;
+    } catch (error) {
+      if (isDuplicatePaymentReferenceError(error)) throw new Error("A payment with this reference already exists. Use a unique reference for this payment.");
+      throw error;
+    }
   });
   return { answer: `## Payment Recorded\n\n${moneyLabel(payment.amount)} was recorded via **${payment.method.replace(/_/g, " ")}**.`, action: { label: "Open Payments", href: workspacePath(user.role, "payments") } };
 }
@@ -1409,18 +1515,35 @@ async function executeCreatePayment(user: AgentUser, payload: unknown) {
 async function executeCreateInvoice(user: AgentUser, payload: unknown) {
   const data = invoiceCreateSchema.parse(payload);
   const customerId = await resolveCustomerId(user.shopId, data.customerId, data.customerName);
-  const resolvedItems = await Promise.all(data.items.map(async (item) => ({ ...item, product: await resolveProduct(user.shopId, item) })));
-  const demand = new Map<string, number>();
-  for (const item of resolvedItems) demand.set(item.product.id, (demand.get(item.product.id) || 0) + item.quantity);
-  for (const [productId, quantity] of demand) {
-    const product = resolvedItems.find((item) => item.product.id === productId)!.product;
-    if (product.stockQty < quantity) throw new Error(`${product.name} has only ${product.stockQty} in stock.`);
-  }
-  const subtotal = resolvedItems.reduce((sum, item) => sum + item.quantity * Number(item.unitPrice ?? item.product.salePrice), 0);
-  const total = Math.max(subtotal - data.discount + data.tax, 0);
-  const paid = Math.min(data.paidAmount, total);
-  const due = Math.max(total - paid, 0);
+  const resolvedItems = await Promise.all(data.items.map(async (item) => ({ ...item, productId: (await resolveProduct(user.shopId, item)).id })));
   const invoice = await prisma.$transaction(async (tx) => {
+    const saleLines = resolvedItems.map((item) => ({ productId: item.productId, quantity: item.quantity }));
+    const productMap = await lockActiveProductsForSale(tx, user.shopId, saleLines);
+    const subtotal = resolvedItems.reduce((sum, item) => {
+      const product = productMap.get(item.productId)!;
+      return sum + item.quantity * Number(item.unitPrice ?? product.salePrice);
+    }, 0);
+    const total = Math.max(subtotal - data.discount + data.tax, 0);
+    const paid = Math.min(data.paidAmount, total);
+    const due = Math.max(total - paid, 0);
+    const paymentBreakdown = paid > 0 ? { [data.paymentMethod]: paid } : undefined;
+    if (walkInInvoiceHasDue(customerId, total, paid)) throw new Error(WALK_IN_PAYMENT_REQUIRED_MESSAGE);
+
+    let customer: { id: string; balance: unknown; creditLimit: unknown } | null = null;
+    if (customerId) {
+      const customers = await tx.$queryRaw<Array<{ id: string; balance: unknown; creditLimit: unknown }>>`
+        SELECT "id", "balance", "creditLimit"
+        FROM "Customer"
+        WHERE "id" = ${customerId} AND "shopId" = ${user.shopId}
+        FOR UPDATE
+      `;
+      customer = customers[0] || null;
+      if (!customer) throw new Error("Customer not found.");
+    }
+    if (due > 0 && customer && Number(customer.creditLimit) > 0 && Number(customer.balance) + due > Number(customer.creditLimit)) {
+      throw new Error(`Credit limit exceeded. The customer's balance is PKR ${Number(customer.balance).toLocaleString()} and their credit limit is PKR ${Number(customer.creditLimit).toLocaleString()}.`);
+    }
+
     const inv = await tx.invoice.create({
       data: {
         shopId: user.shopId,
@@ -1434,26 +1557,31 @@ async function executeCreateInvoice(user: AgentUser, payload: unknown) {
         paidAmount: paid,
         dueAmount: due,
         status: invoiceStatus(total, paid),
+        paymentBreakdown,
         dueDate: data.dueDate,
         notes: data.notes,
         items: {
           create: resolvedItems.map((item) => {
-            const unitPrice = Number(item.unitPrice ?? item.product.salePrice);
-            return { productId: item.product.id, quantity: item.quantity, unitPrice, costPrice: item.product.costPrice, total: item.quantity * unitPrice };
+            const product = productMap.get(item.productId)!;
+            const unitPrice = Number(item.unitPrice ?? product.salePrice);
+            return { productId: product.id, quantity: item.quantity, unitPrice, costPrice: product.costPrice, total: item.quantity * unitPrice };
           })
         }
       },
       include: { customer: true, items: { include: { product: true } } }
     });
-    const runningStock = new Map(resolvedItems.map((item) => [item.product.id, item.product.stockQty]));
-    for (const item of resolvedItems) {
-      const beforeQty = runningStock.get(item.product.id)!;
-      const afterQty = beforeQty - item.quantity;
-      runningStock.set(item.product.id, afterQty);
-      await tx.product.update({ where: { id: item.product.id }, data: { stockQty: { decrement: item.quantity } } });
-      await tx.stockMovement.create({ data: { shopId: user.shopId, productId: item.product.id, userId: user.id, type: "SALE", quantity: -item.quantity, beforeQty, afterQty, reference: inv.invoiceNo, notes: "Invoice sale created by ShopIQ AI after user confirmation." } });
-    }
+    await decrementStockForSale(tx, { shopId: user.shopId, userId: user.id, invoiceNo: inv.invoiceNo, lines: saleLines, products: productMap, notes: "Invoice sale created by ShopIQ AI after user confirmation." });
     if (customerId && due > 0) await tx.customer.update({ where: { id: customerId }, data: { balance: { increment: due } } });
+    if (paid > 0) {
+      await syncAutomaticInvoicePayment(tx, {
+        shopId: user.shopId,
+        invoice: inv,
+        amount: paid,
+        invoicePaidAmount: paid,
+        method: data.paymentMethod,
+        createdById: user.id
+      });
+    }
     await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_INVOICE_CREATED", title: `AI created invoice ${inv.invoiceNo}`, details: moneyLabel(total) } });
     return inv;
   });
@@ -1463,9 +1591,11 @@ async function executeCreateInvoice(user: AgentUser, payload: unknown) {
 async function executeCreatePurchase(user: AgentUser, payload: unknown) {
   const data = purchaseCreateSchema.parse(payload);
   const supplierId = await resolveSupplierId(user.shopId, data.supplierId, data.supplierName);
+  if (!supplierId) throw new Error("A supplier is required before creating a purchase.");
   const resolvedItems = await Promise.all(data.items.map(async (item) => ({ ...item, product: await resolveProduct(user.shopId, item) })));
   const total = resolvedItems.reduce((sum, item) => sum + item.quantity * item.unitCost, 0);
-  const paid = Math.min(data.paidAmount, total);
+  if (data.paidAmount > total) throw new Error("Paid amount cannot exceed purchase total.");
+  const paid = data.paidAmount;
   const due = Math.max(total - paid, 0);
   const purchase = await prisma.$transaction(async (tx) => {
     const pur = await tx.purchase.create({
@@ -1493,7 +1623,17 @@ async function executeCreatePurchase(user: AgentUser, payload: unknown) {
       await tx.product.update({ where: { id: item.product.id }, data: { stockQty: { increment: item.quantity }, costPrice: item.unitCost } });
       await tx.stockMovement.create({ data: { shopId: user.shopId, productId: item.product.id, userId: user.id, type: "PURCHASE", quantity: item.quantity, beforeQty, afterQty, reference: pur.purchaseNo, notes: "Purchase received by ShopIQ AI after user confirmation." } });
     }
-    if (supplierId && due > 0) await tx.supplier.update({ where: { id: supplierId }, data: { balance: { increment: due } } });
+    if (due > 0) await tx.supplier.update({ where: { id: supplierId }, data: { balance: { increment: due } } });
+    if (paid > 0) {
+      await syncAutomaticPurchasePayment(tx, {
+        shopId: user.shopId,
+        purchase: pur,
+        amount: paid,
+        purchasePaidAmount: paid,
+        method: "CASH",
+        createdById: user.id
+      });
+    }
     await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "AI_PURCHASE_CREATED", title: `AI created purchase ${pur.purchaseNo}`, details: moneyLabel(total) } });
     return pur;
   });
@@ -1572,7 +1712,7 @@ export async function executePendingAiAction(user: AgentUser, action: AiActionTy
   }
   if (action === "create_payment") {
     const parsed = paymentCreateSchema.parse(payload);
-    if (!canUsePaymentDirection(user.role, parsed.direction)) return { answer: "## Permission Needed\n\nYour role can record customer receipts only.", action: null };
+    if (!canUsePaymentDirection(user.role, parsed.direction)) return { answer: "## Permission Needed\n\nYour role cannot record that payment direction.", action: null };
   }
 
   switch (action) {

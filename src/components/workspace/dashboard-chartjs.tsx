@@ -22,6 +22,9 @@ type RevealChart = Chart & {
   $shopiqCurveRevealProgress?: number;
   $shopiqCurveRevealClipped?: boolean;
   $shopiqEntryAnimationDone?: boolean;
+  $shopiqPieBuildStart?: number;
+  $shopiqPieBuildFrame?: number;
+  $shopiqPieBuildDone?: boolean;
 };
 
 function revealEnabled(options: unknown) {
@@ -61,7 +64,112 @@ const curveRevealPlugin: Plugin = {
   }
 };
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler, curveRevealPlugin);
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function easeOutQuart(value: number) {
+  return 1 - Math.pow(1 - clamp01(value), 4);
+}
+
+function easeInOutCubic(value: number) {
+  const t = clamp01(value);
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function prefersReducedMotion() {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function pieBuildEnabled(options: unknown) {
+  return Boolean((options as { enabled?: boolean } | undefined)?.enabled);
+}
+
+function arcColor(value: unknown, index: number) {
+  if (Array.isArray(value)) return String(value[index] || value[0] || "hsl(220 80% 56%)");
+  return String(value || "hsl(220 80% 56%)");
+}
+
+function drawPieBuildFrame(chart: Chart, progress: number) {
+  const dataset = chart.data.datasets[0];
+  const meta = chart.getDatasetMeta(0);
+  const arcs = meta.data;
+  if (!dataset || !arcs.length) return;
+
+  const gap = Math.min(0.095, arcs.length > 1 ? 0.44 / (arcs.length - 1) : 0);
+  const sliceDuration = Math.max(0.46, 1 - gap * Math.max(arcs.length - 1, 0));
+  const { ctx } = chart;
+
+  ctx.save();
+  for (let index = 0; index < arcs.length; index += 1) {
+    const arc = arcs[index] as any;
+    const props = arc.getProps(["x", "y", "innerRadius", "outerRadius", "startAngle", "endAngle", "circumference"], true);
+    const local = clamp01((progress - index * gap) / sliceDuration);
+    if (local <= 0 || !Number.isFinite(props.circumference) || props.circumference <= 0) continue;
+
+    const sweep = easeOutQuart(local);
+    const settle = easeInOutCubic(local);
+    const startAngle = props.startAngle - (1 - settle) * 0.72;
+    const endAngle = startAngle + props.circumference * sweep;
+    const outerRadius = props.outerRadius * (0.91 + 0.09 * settle);
+    const innerRadius = props.innerRadius * (0.96 + 0.04 * settle);
+
+    ctx.globalAlpha = Math.min(1, 0.14 + sweep * 0.86);
+    ctx.fillStyle = arcColor(dataset.backgroundColor, index);
+    ctx.beginPath();
+    ctx.arc(props.x, props.y, outerRadius, startAngle, endAngle);
+    if (innerRadius > 0) {
+      ctx.arc(props.x, props.y, innerRadius, endAngle, startAngle, true);
+    } else {
+      ctx.lineTo(props.x, props.y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+const pieBuildPlugin: Plugin = {
+  id: "shopiqPieBuild",
+  beforeDatasetsDraw(chart, _args, options) {
+    if (!pieBuildEnabled(options)) return;
+    const revealChart = chart as RevealChart;
+    if (revealChart.$shopiqPieBuildDone || prefersReducedMotion()) {
+      revealChart.$shopiqPieBuildDone = true;
+      return;
+    }
+
+    const now = performance.now();
+    revealChart.$shopiqPieBuildStart ??= now;
+    const elapsed = now - revealChart.$shopiqPieBuildStart;
+    const progress = clamp01(elapsed / 1320);
+
+    if (progress >= 1) {
+      revealChart.$shopiqPieBuildDone = true;
+      revealChart.$shopiqEntryAnimationDone = true;
+      return;
+    }
+
+    drawPieBuildFrame(chart, progress);
+
+    if (!revealChart.$shopiqPieBuildFrame) {
+      revealChart.$shopiqPieBuildFrame = window.requestAnimationFrame(() => {
+        revealChart.$shopiqPieBuildFrame = undefined;
+        chart.draw();
+      });
+    }
+
+    return false;
+  },
+  afterDestroy(chart) {
+    const revealChart = chart as RevealChart;
+    if (revealChart.$shopiqPieBuildFrame) {
+      window.cancelAnimationFrame(revealChart.$shopiqPieBuildFrame);
+    }
+  }
+};
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler, curveRevealPlugin, pieBuildPlugin);
 
 type TimelineDatum = {
   label: string;
@@ -374,31 +482,9 @@ export function DashboardCategoryPie({ data, total }: { data: SegmentDatum[]; to
       responsive: true,
       maintainAspectRatio: false,
       rotation: -90,
-      animation: {
-        animateRotate: true,
-        animateScale: true,
-        duration: 1050,
-        easing: "easeOutQuart" as const,
-        delay: (context: any) => staggerByDataIndex(context, 70),
-        onComplete: completeEntryAnimation
-      },
-      animations: {
-        circumference: {
-          from: 0,
-          duration: 1050,
-          easing: "easeOutQuart" as const
-        },
-        rotation: {
-          from: -210,
-          duration: 1050,
-          easing: "easeOutQuart" as const
-        },
-        outerRadius: {
-          duration: 900,
-          easing: "easeOutBack" as const
-        }
-      },
+      animation: false as const,
       plugins: {
+        shopiqPieBuild: { enabled: true },
         legend: {
           position: "bottom" as const,
           labels: {

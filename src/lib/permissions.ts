@@ -33,10 +33,10 @@ export function isAdmin(role: UserRole | string | undefined | null) {
   return role === "ADMIN";
 }
 
-export function canUsePaymentDirection(role: UserRole | string | undefined | null, direction: "CUSTOMER_IN" | "SUPPLIER_OUT") {
+export function canUsePaymentDirection(role: UserRole | string | undefined | null, direction: "CUSTOMER_IN" | "SUPPLIER_OUT" | string) {
   if (!can(role, "payments", "create")) return false;
   if (direction === "SUPPLIER_OUT") return isManagerOrAdmin(role);
-  return true;
+  return direction === "CUSTOMER_IN";
 }
 
 export function canReadSupplierCashflow(role: UserRole | string | undefined | null) {

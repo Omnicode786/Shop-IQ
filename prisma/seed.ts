@@ -69,7 +69,7 @@ async function main() {
     const supplier=pick(suppliers); const p=pick(products); const qty=rand(5,40); const cost=Number(p.costPrice); const total=qty*cost; const paid=Math.random()>0.4?total:rand(0,total); const date=subDays(new Date(), rand(0, 150));
     const pur=await prisma.purchase.create({ data: { shopId: shop.id, supplierId:supplier.id, createdById:owner.id, purchaseNo:`PUR-${String(i).padStart(5,"0")}`, subtotal:total,total,paidAmount:paid,dueAmount:total-paid,status:"RECEIVED",purchaseDate:date,items:{create:{productId:p.id,quantity:qty,unitCost:cost,total}} } });
     if(total-paid>0) await prisma.supplier.update({where:{id:supplier.id},data:{balance:{increment:total-paid}}});
-    if(paid>0) await prisma.payment.create({data:{shopId:shop.id,supplierId:supplier.id,purchaseId:pur.id,createdById:owner.id,direction:"SUPPLIER_OUT",method:pick(["CASH","BANK_TRANSFER","CHEQUE"] as any),amount:paid,paidAt:date,reference:pur.purchaseNo}});
+    // supplier payment is tracked implicitly via the purchase's paidAmount.
     await prisma.stockMovement.create({data:{shopId:shop.id,productId:p.id,userId:owner.id,type:"PURCHASE",quantity:qty,beforeQty:p.stockQty,afterQty:p.stockQty+qty,reference:pur.purchaseNo,movedAt:date}});
   }
 

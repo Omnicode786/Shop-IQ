@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { captureModalOrigin, modalMotionStyle, ModalPortal, type ModalMotionOrigin } from "@/components/workspace/modal-portal";
+import { WALK_IN_PAYMENT_REQUIRED_MESSAGE, amountInputValue } from "@/lib/invoice-rules";
 import { toast } from "@/lib/toast";
 
 type CustomerOption = {
@@ -49,6 +50,7 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
     productId: "",
     quantity: "1",
     paidAmount: "0",
+    paymentMethod: "CASH",
     discount: "0",
     channel: "POS",
     notes: ""
@@ -59,8 +61,10 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
   const discount = Math.max(0, Number(form.discount || 0));
   const subtotal = selectedProduct ? Number(selectedProduct.salePrice || 0) * quantity : 0;
   const total = Math.max(0, subtotal - discount);
+  const isWalkInCustomer = !createCustomer && !form.customerId;
   const paid = Math.min(Math.max(0, Number(form.paidAmount || 0)), total);
-  const due = Math.max(0, total - paid);
+  const effectivePaid = isWalkInCustomer ? total : paid;
+  const due = Math.max(0, total - effectivePaid);
 
   useEffect(() => {
     if (!open) return;
@@ -77,6 +81,12 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
     };
   }, []);
 
+  useEffect(() => {
+    if (!open || !isWalkInCustomer) return;
+    const paidOnSpot = amountInputValue(total);
+    setForm((current) => (current.paidAmount === paidOnSpot ? current : { ...current, paidAmount: paidOnSpot }));
+  }, [isWalkInCustomer, open, total]);
+
   function resetForm() {
     setForm({
       customerId: "",
@@ -86,6 +96,7 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
       productId: "",
       quantity: "1",
       paidAmount: "0",
+      paymentMethod: "CASH",
       discount: "0",
       channel: "POS",
       notes: ""
@@ -162,8 +173,8 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
       stopWithMessage("Enter the new customer name or switch back to walk-in/select customer.");
       return;
     }
-    if (due > 0 && !createCustomer && !form.customerId) {
-      stopWithMessage("Choose or create a customer when any invoice amount will remain due.");
+    if (due > 0 && isWalkInCustomer) {
+      stopWithMessage(WALK_IN_PAYMENT_REQUIRED_MESSAGE);
       return;
     }
 
@@ -198,7 +209,9 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
           discount,
           tax: 0,
           loyaltyDiscount: 0,
-          paidAmount: paid,
+          paidAmount: effectivePaid,
+          paymentMethod: form.paymentMethod,
+          paymentBreakdown: effectivePaid > 0 ? { [form.paymentMethod]: effectivePaid } : undefined,
           channel: form.channel,
           notes: form.notes,
           items: [{ productId: form.productId, quantity }]
@@ -317,7 +330,27 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
                     <div className="grid gap-3 sm:grid-cols-3">
                       <label className="crud-field">
                         <span className="crud-field-label">Paid amount</span>
-                        <Input type="number" min={0} value={form.paidAmount} onChange={(event) => update("paidAmount", event.target.value)} />
+                        <Input
+                          type="number"
+                          min={0}
+                          value={isWalkInCustomer ? amountInputValue(total) : form.paidAmount}
+                          onChange={(event) => update("paidAmount", event.target.value)}
+                          readOnly={isWalkInCustomer}
+                          title={isWalkInCustomer ? "Walk-in invoices are paid in full on spot." : undefined}
+                        />
+                        {isWalkInCustomer ? <span className="text-xs leading-5 text-muted-foreground">Walk-in bills are settled on spot. Select or create a customer to allow dues.</span> : null}
+                      </label>
+                      <label className="crud-field">
+                        <span className="crud-field-label">Payment method</span>
+                        <select className="form-select" value={form.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value)}>
+                          <option value="CASH">Cash</option>
+                          <option value="BANK_TRANSFER">Bank transfer</option>
+                          <option value="CARD">Card</option>
+                          <option value="JAZZCASH">JazzCash</option>
+                          <option value="EASYPAISA">EasyPaisa</option>
+                          <option value="CHEQUE">Cheque</option>
+                          <option value="OTHER">Other</option>
+                        </select>
                       </label>
                       <label className="crud-field">
                         <span className="crud-field-label">Channel</span>
@@ -330,7 +363,7 @@ export function BillingFlow({ customers, products, canCreate }: { customers: Cus
                       <div className="billing-total-card">
                         <span>Total</span>
                         <strong>{money(total)}</strong>
-                        <small>{due > 0 ? `${money(due)} due` : "Fully paid"}</small>
+                        <small>{isWalkInCustomer ? "Walk-in paid on spot" : due > 0 ? `${money(due)} due` : "Fully paid"}</small>
                       </div>
                       <label className="crud-field sm:col-span-3">
                         <span className="crud-field-label">Notes</span>

@@ -1,0 +1,11 @@
+ ⨯ Error: Functions cannot be passed directly to Client Components unless you explicitly expose it by marking it with "use server". Or maybe you meant to call this function rather than return it.
+  {key: "batchNo", label: ..., showIf: function showIf}
+                                       ^^^^^^^^^^^^^^^
+    at stringify (<anonymous>)
+digest: "3682760556"
+ ⨯ Error: Functions cannot be passed directly to Client Components unless you explicitly expose it by marking it with "use server". Or maybe you meant to call this function rather than return it.
+  {key: "batchNo", label: ..., showIf: function showIf}
+                                       ^^^^^^^^^^^^^^^
+    at stringify (<anonymous>)
+digest: "3682760556"
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.

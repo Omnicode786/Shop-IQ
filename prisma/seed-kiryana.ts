@@ -707,22 +707,7 @@ async function seedPurchases(
         });
       }
     }
-    if (paidAmount > 0) {
-      const method = paymentMethodPicker("supplier");
-      payments.push({
-        id: `kiryana_supplier_payment_${String(index).padStart(6, "0")}`,
-        shopId,
-        supplierId: supplier.id,
-        purchaseId,
-        createdById: creator.id,
-        direction: "SUPPLIER_OUT",
-        method,
-        amount: money(paidAmount),
-        paidAt: date,
-        reference: paymentReference(method, index),
-        notes: `Supplier payment for ${purchaseNo}.`
-      });
-    }
+    // Payment handled via Purchase paidAmount
   }
 
   await createManyInChunks(prisma.purchase, purchases);

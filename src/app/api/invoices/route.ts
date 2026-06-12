@@ -3,6 +3,9 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { apiError, badRequest, forbidden, notFound, unauthorized } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { WALK_IN_PAYMENT_REQUIRED_MESSAGE, walkInInvoiceHasDue } from "@/lib/invoice-rules";
+import { decrementStockForSale, InsufficientStockError, lockActiveProductsForSale, SaleProductNotFoundError } from "@/lib/invoice-stock";
+import { invoiceStatusFromPaid, syncAutomaticInvoicePayment } from "@/lib/payment-workflow";
 import { prisma } from "@/lib/prisma";
 import { money, optionalId, optionalText, positiveIntQty } from "@/lib/validation";
 
@@ -19,6 +22,7 @@ const invoiceSchema = z.object({
   tax: money,
   loyaltyDiscount: money,
   paidAmount: money,
+  paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "CARD", "JAZZCASH", "EASYPAISA", "CHEQUE", "OTHER"]).default("CASH"),
   dueDate: z.coerce.date().optional(),
   cashierCounter: optionalText(80),
   channel: optionalText(80),
@@ -28,10 +32,6 @@ const invoiceSchema = z.object({
   notes: optionalText(600),
   items: z.array(invoiceItemSchema).min(1, "Add at least one item.")
 });
-
-function invoiceStatus(total: number, paid: number) {
-  return paid >= total ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";
-}
 
 export async function GET() {
   try {
@@ -51,30 +51,37 @@ export async function POST(request: Request) {
     if (!user) return unauthorized();
     if (!can(user.role, "invoices", "create")) return forbidden();
     const data = invoiceSchema.parse(await request.json());
-    if (data.customerId) {
-      const customer = await prisma.customer.findFirst({ where: { id: data.customerId, shopId: user.shopId }, select: { id: true } });
-      if (!customer) return notFound("Customer not found.");
-    }
-    const products = await prisma.product.findMany({ where: { shopId: user.shopId, id: { in: data.items.map((item) => item.productId) }, status: "ACTIVE" } });
-    const productMap = new Map(products.map((product) => [product.id, product]));
-    const demand = new Map<string, number>();
-    for (const item of data.items) {
-      const product = productMap.get(item.productId);
-      if (!product) return notFound("One of the selected products was not found.");
-      demand.set(item.productId, (demand.get(item.productId) || 0) + item.quantity);
-    }
-    for (const [productId, quantity] of demand) {
-      const product = productMap.get(productId)!;
-      if (product.stockQty < quantity) return badRequest(`${product.name} has only ${product.stockQty} in stock.`);
-    }
-    const subtotal = data.items.reduce((sum, item) => {
-      const product = productMap.get(item.productId)!;
-      return sum + item.quantity * Number(item.unitPrice ?? product.salePrice);
-    }, 0);
-    const total = Math.max(subtotal - data.discount - data.loyaltyDiscount + data.tax, 0);
-    const paid = Math.min(data.paidAmount, total);
-    const due = Math.max(total - paid, 0);
     const invoice = await prisma.$transaction(async (tx) => {
+      const saleLines = data.items.map((item) => ({ productId: item.productId, quantity: item.quantity }));
+      const productMap = await lockActiveProductsForSale(tx, user.shopId, saleLines);
+      const subtotal = data.items.reduce((sum, item) => {
+        const product = productMap.get(item.productId)!;
+        return sum + item.quantity * Number(item.unitPrice ?? product.salePrice);
+      }, 0);
+      const total = Math.max(subtotal - data.discount - data.loyaltyDiscount + data.tax, 0);
+      const paid = Math.min(data.paidAmount, total);
+      const due = Math.max(total - paid, 0);
+      const paymentBreakdown = data.paymentBreakdown || (paid > 0 ? { [data.paymentMethod]: paid } : undefined);
+      if (walkInInvoiceHasDue(data.customerId, total, paid)) throw new Error("WALK_IN_PAYMENT_REQUIRED");
+
+      let customer: { id: string; balance: unknown; creditLimit: unknown } | null = null;
+      if (data.customerId) {
+        const customers = await tx.$queryRaw<Array<{ id: string; balance: unknown; creditLimit: unknown }>>`
+          SELECT "id", "balance", "creditLimit"
+          FROM "Customer"
+          WHERE "id" = ${data.customerId} AND "shopId" = ${user.shopId}
+          FOR UPDATE
+        `;
+        customer = customers[0] || null;
+        if (!customer) throw new Error("CUSTOMER_NOT_FOUND");
+      }
+
+      if (due > 0 && customer && Number(customer.creditLimit) > 0) {
+        if (Number(customer.balance) + due > Number(customer.creditLimit)) {
+          throw new Error(`CREDIT_LIMIT_EXCEEDED: Credit limit exceeded. The customer's balance is PKR ${Number(customer.balance).toLocaleString()} and their credit limit is PKR ${Number(customer.creditLimit).toLocaleString()}.`);
+        }
+      }
+
       const inv = await tx.invoice.create({
         data: {
           shopId: user.shopId,
@@ -88,13 +95,13 @@ export async function POST(request: Request) {
           total,
           paidAmount: paid,
           dueAmount: due,
-          status: invoiceStatus(total, paid),
+          status: invoiceStatusFromPaid(total, paid),
           dueDate: data.dueDate,
           cashierCounter: data.cashierCounter,
           channel: data.channel,
           promoCode: data.promoCode,
           receiptNo: data.receiptNo,
-          paymentBreakdown: data.paymentBreakdown,
+          paymentBreakdown,
           notes: data.notes,
           items: {
             create: data.items.map((item) => {
@@ -106,20 +113,28 @@ export async function POST(request: Request) {
         },
         include: { customer: true, items: { include: { product: true } } }
       });
-      const runningStock = new Map(products.map((product) => [product.id, product.stockQty]));
-      for (const item of data.items) {
-        const beforeQty = runningStock.get(item.productId)!;
-        const afterQty = beforeQty - item.quantity;
-        runningStock.set(item.productId, afterQty);
-        await tx.product.update({ where: { id: item.productId }, data: { stockQty: { decrement: item.quantity } } });
-        await tx.stockMovement.create({ data: { shopId: user.shopId, productId: item.productId, userId: user.id, type: "SALE", quantity: -item.quantity, beforeQty, afterQty, reference: inv.invoiceNo, notes: "Invoice sale" } });
+      if (paid > 0) {
+        await syncAutomaticInvoicePayment(tx, {
+          shopId: user.shopId,
+          invoice: inv,
+          amount: paid,
+          invoicePaidAmount: paid,
+          method: data.paymentMethod,
+          createdById: user.id
+        });
       }
+      await decrementStockForSale(tx, { shopId: user.shopId, userId: user.id, invoiceNo: inv.invoiceNo, lines: saleLines, products: productMap, notes: "Invoice sale" });
       if (data.customerId && due > 0) await tx.customer.update({ where: { id: data.customerId }, data: { balance: { increment: due } } });
       await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "INVOICE_CREATED", title: `Invoice ${inv.invoiceNo} created`, details: `PKR ${total.toLocaleString()}` } });
       return inv;
     });
     return NextResponse.json({ invoice });
   } catch (e) {
+    if (e instanceof SaleProductNotFoundError) return notFound(e.message);
+    if (e instanceof InsufficientStockError) return badRequest(e.message);
+    if (e instanceof Error && e.message === "CUSTOMER_NOT_FOUND") return notFound("Customer not found.");
+    if (e instanceof Error && e.message === "WALK_IN_PAYMENT_REQUIRED") return badRequest(WALK_IN_PAYMENT_REQUIRED_MESSAGE);
+    if (e instanceof Error && e.message.startsWith("CREDIT_LIMIT_EXCEEDED:")) return badRequest(e.message.replace("CREDIT_LIMIT_EXCEEDED:", "").trim());
     return apiError(e, "Unable to create invoice.");
   }
 }

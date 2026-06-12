@@ -1,0 +1,133 @@
+
+> shopiq-next@1.0.0 dev
+> next dev -p 3001
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3001
+  - Environments: .env
+
+ ✓ Starting...
+ ✓ Ready in 12.7s
+ ○ Compiling / ...
+ ✓ Compiled / in 13.8s (1449 modules)
+ GET / 200 in 16245ms
+ GET / 200 in 232ms
+ ○ Compiling /src/middleware ...
+ ✓ Compiled /src/middleware in 4.6s (153 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 18.3s (1496 modules)
+ GET /login 200 in 20476ms
+ ○ Compiling /api/auth/login ...
+ ✓ Compiled /api/auth/login in 4s (908 modules)
+ ○ Compiling /admin/customers ...
+ POST /api/auth/login 200 in 10865ms
+ ✓ Compiled /admin/dashboard in 11.1s (1814 modules)
+ GET / 200 in 3452ms
+ GET /admin/dashboard 200 in 4940ms
+ ○ Compiling /admin/products ...
+ ✓ Compiled /admin/products in 5s (1834 modules)
+ GET /admin/products 200 in 7606ms
+ ○ Compiling /admin/billing ...
+ ✓ Compiled /admin/billing in 2.1s (1834 modules)
+ GET /admin/billing 200 in 2611ms
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+ ✓ Compiled in 9.1s (1796 modules)
+ ✓ Compiled in 4.3s (777 modules)
+ GET / 200 in 1992ms
+ GET /login 200 in 365ms
+ ○ Compiling /api/auth/login ...
+ ✓ Compiled /api/auth/login in 2.2s (1060 modules)
+ POST /api/auth/login 200 in 5965ms
+ GET /admin/dashboard 200 in 3717ms
+ ○ Compiling /admin/products ...
+ ✓ Compiled /admin/products in 1649ms (1067 modules)
+ GET /admin/products 200 in 4713ms
+ GET /admin/billing 200 in 4141ms
+ ○ Compiling /admin/customers ...
+ ✓ Compiled /admin/customers in 1532ms (1071 modules)
+ GET /admin/customers 200 in 3952ms
+ ○ Compiling /admin/suppliers ...
+ ✓ Compiled /admin/suppliers in 5.5s (1838 modules)
+ GET /admin/suppliers 200 in 7347ms
+ ○ Compiling /admin/payments ...
+ ✓ Compiled /admin/payments in 4.1s (1473 modules)
+ GET /admin/payments 200 in 8892ms
+ ○ Compiling /admin/purchases ...
+ ✓ Compiled /admin/purchases in 4.6s (1423 modules)
+ GET /admin/purchases 200 in 6945ms
+ ○ Compiling /admin/reports ...
+ ✓ Compiled /admin/reports in 4.6s (1414 modules)
+ GET /admin/reports 200 in 7788ms
+ ○ Compiling /admin/assistant ...
+ ✓ Compiled /admin/assistant in 5.3s (1440 modules)
+ GET /admin/assistant 200 in 7071ms
+ ○ Compiling /api/ai/chat ...
+ ✓ Compiled /api/ai/chat in 3.5s (853 modules)
+ ○ Compiling /admin/settings ...
+ GET /api/ai/chat 200 in 7037ms
+ ✓ Compiled /admin/settings in 6.7s (1655 modules)
+ GET /api/ai/chat 200 in 7218ms
+ GET /admin/settings 200 in 12875ms
+ ○ Compiling / ...
+ ✓ Compiled / in 4.9s (1025 modules)
+ GET / 200 in 6586ms
+ ○ Compiling /login ...
+ ✓ Compiled /login in 2.5s (1046 modules)
+ GET /login 200 in 3645ms
+ ○ Compiling /api/auth/login ...
+ ✓ Compiled /api/auth/login in 1522ms (1074 modules)
+ POST /api/auth/login 200 in 6486ms
+ ○ Compiling /admin/dashboard ...
+ ✓ Compiled /admin/dashboard in 2.6s (1087 modules)
+ GET /admin/dashboard 200 in 4083ms
+ ○ Compiling /admin/products ...
+ ✓ Compiled /admin/products in 4s (1078 modules)
+ GET /admin/products 200 in 7053ms
+ GET /admin/billing 200 in 4239ms
+ ○ Compiling /admin/customers ...
+ ✓ Compiled /admin/customers in 1809ms (1071 modules)
+ GET /admin/customers 200 in 3816ms
+ ○ Compiling /admin/suppliers ...
+ ✓ Compiled /admin/suppliers in 2.8s (1075 modules)
+ GET /admin/suppliers 200 in 5071ms
+ ○ Compiling /admin/payments ...
+ ✓ Compiled /admin/payments in 2s (710 modules)
+ GET /admin/payments 200 in 6496ms
+ ○ Compiling /admin/purchases ...
+ ✓ Compiled /admin/purchases in 2.8s (682 modules)
+ GET /admin/purchases 200 in 5913ms
+ ○ Compiling /admin/reports ...
+ ✓ Compiled /admin/reports in 4.3s (663 modules)
+ GET /admin/reports 200 in 7693ms
+ ○ Compiling /admin/assistant ...
+ ✓ Compiled /admin/assistant in 3.8s (658 modules)
+ GET /admin/assistant 200 in 6096ms
+ ○ Compiling /api/ai/chat ...
+ ✓ Compiled /admin/settings in 5.1s (853 modules)
+ ✓ Compiled (868 modules)
+ GET /api/ai/chat 200 in 12307ms
+ GET /api/ai/chat 200 in 702ms
+ GET /admin/settings 200 in 10105ms
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }
+prisma:error Error in PostgreSQL connection: Error { kind: Closed, cause: None }

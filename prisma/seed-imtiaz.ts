@@ -564,7 +564,7 @@ async function seedPurchases(shopId: string, products: ProductRuntime[], supplie
       }
     });
     if (paidAmount > 0) {
-      await prisma.payment.create({ data: { shopId, supplierId: supplier.id, purchaseId: purchase.id, createdById: creator.id, direction: "SUPPLIER_OUT", method: paymentMethodPicker("supplier"), amount: money(paidAmount), paidAt: purchaseDate, reference: purchaseNo, notes: "Supplier payment recorded against purchase intake." } });
+      // Payment handled via Purchase paidAmount
     }
     if (status !== "ORDERED") {
       for (const item of items) {
@@ -713,7 +713,7 @@ async function seedPurchasesFast(shopId: string, products: ProductRuntime[], sup
       }
     }
     if (paidAmount > 0) {
-      payments.push({ id: `imtiaz_supplier_payment_${String(index).padStart(6, "0")}`, shopId, supplierId: supplier.id, purchaseId, createdById: creator.id, direction: "SUPPLIER_OUT", method: paymentMethodPicker("supplier"), amount: money(paidAmount), paidAt: purchaseDate, reference: purchaseNo, notes: "Supplier payment recorded against purchase intake." });
+      // Payment handled via Purchase paidAmount
     }
   }
 

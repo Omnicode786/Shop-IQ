@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { apiError, badRequest, forbidden, notFound, unauthorized } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { syncAutomaticPurchasePayment } from "@/lib/supplier-payment-workflow";
 import { money, nullableId, nullableText } from "@/lib/validation";
 
 const purchaseUpdateSchema = z.object({
@@ -16,10 +17,13 @@ const purchaseUpdateSchema = z.object({
 });
 
 async function cancelPurchase(user: { id: string; shopId: string }, purchaseId: string) {
-  const existing = await prisma.purchase.findFirst({ where: { id: purchaseId, shopId: user.shopId }, include: { items: true } });
+  const existing = await prisma.purchase.findFirst({ where: { id: purchaseId, shopId: user.shopId }, include: { items: true, payments: true } });
   if (!existing) return notFound("Purchase not found.");
   if (existing.status === "CANCELLED") return NextResponse.json({ ok: true });
-  const products = await prisma.product.findMany({ where: { shopId: user.shopId, id: { in: existing.items.map((item) => item.productId) } }, select: { id: true, name: true, stockQty: true } });
+  if (Number(existing.paidAmount || 0) > 0 || existing.payments.length > 0) {
+    return badRequest("Cannot cancel a purchase with supplier payments. Reverse or settle the supplier payment records first.");
+  }
+  const products = await prisma.product.findMany({ where: { shopId: user.shopId, id: { in: existing.items.map((item) => item.productId) } }, select: { id: true, name: true, stockQty: true, costPrice: true } });
   const productMap = new Map(products.map((product) => [product.id, product]));
   const demand = new Map<string, number>();
   for (const item of existing.items) demand.set(item.productId, (demand.get(item.productId) || 0) + item.quantity);
@@ -30,16 +34,32 @@ async function cancelPurchase(user: { id: string; shopId: string }, purchaseId: 
   await prisma.$transaction(async (tx) => {
     if (existing.supplierId && Number(existing.dueAmount) > 0) await tx.supplier.update({ where: { id: existing.supplierId }, data: { balance: { decrement: Number(existing.dueAmount) } } });
     const runningStock = new Map(products.map((product) => [product.id, product.stockQty]));
+    const productCostMap = new Map(products.map((product) => [product.id, Number(product.costPrice || 0)]));
     for (const item of existing.items) {
       const product = productMap.get(item.productId);
       if (!product) continue;
       const beforeQty = runningStock.get(item.productId) ?? product.stockQty;
+      const beforeCost = productCostMap.get(item.productId) ?? Number(product.costPrice || 0);
       const afterQty = beforeQty - item.quantity;
       runningStock.set(item.productId, afterQty);
-      await tx.product.update({ where: { id: item.productId }, data: { stockQty: { decrement: item.quantity } } });
+
+      let revertedCost = beforeCost;
+      if (afterQty > 0) {
+        const itemUnitCost = Number(item.unitCost || 0);
+        revertedCost = ((beforeQty * beforeCost) - (item.quantity * itemUnitCost)) / afterQty;
+        if (revertedCost < 0) revertedCost = 0;
+      }
+
+      await tx.product.update({ 
+        where: { id: item.productId }, 
+        data: { 
+          stockQty: { decrement: item.quantity },
+          costPrice: revertedCost
+        } 
+      });
       await tx.stockMovement.create({ data: { shopId: user.shopId, productId: item.productId, userId: user.id, type: "RETURN_OUT", quantity: -item.quantity, beforeQty, afterQty, reference: existing.purchaseNo, notes: "Purchase cancellation stock reversal" } });
     }
-    await tx.purchase.update({ where: { id: existing.id }, data: { status: "CANCELLED", dueAmount: 0 } });
+    await tx.purchase.update({ where: { id: existing.id }, data: { status: "CANCELLED", paidAmount: 0, dueAmount: 0 } });
     await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "PURCHASE_CANCELLED", title: `Purchase ${existing.purchaseNo} cancelled` } });
   });
   return NextResponse.json({ ok: true });
@@ -56,18 +76,29 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     if (data.status === "CANCELLED") return cancelPurchase(user, params.id);
     if (existing.status === "CANCELLED") return badRequest("Cancelled purchases cannot be edited.");
     if (data.supplierId) {
-      const supplier = await prisma.supplier.findFirst({ where: { id: data.supplierId, shopId: user.shopId }, select: { id: true } });
+      const supplier = await prisma.supplier.findFirst({ where: { id: data.supplierId, shopId: user.shopId, status: "ACTIVE" }, select: { id: true } });
       if (!supplier) return notFound("Supplier not found.");
     }
     const nextTotal = Number(data.total ?? existing.total);
-    const nextPaid = Math.min(Number(data.paidAmount ?? existing.paidAmount), nextTotal);
+    const requestedPaid = Number(data.paidAmount ?? existing.paidAmount);
+    if (requestedPaid > nextTotal) return badRequest("Paid amount cannot exceed purchase total.");
+    const nextPaid = requestedPaid;
     const nextDue = Math.max(nextTotal - nextPaid, 0);
     const nextSupplierId = data.supplierId !== undefined ? data.supplierId || null : existing.supplierId;
+    if (!nextSupplierId) return badRequest("A purchase must stay linked to a supplier so payables and supplier payments remain traceable.");
     const updateData = { ...data, supplierId: nextSupplierId, subtotal: nextTotal, total: nextTotal, paidAmount: nextPaid, dueAmount: nextDue };
     const purchase = await prisma.$transaction(async (tx) => {
       if (existing.supplierId && Number(existing.dueAmount) > 0) await tx.supplier.update({ where: { id: existing.supplierId }, data: { balance: { decrement: Number(existing.dueAmount) } } });
       if (nextSupplierId && nextDue > 0 && updateData.status !== "CANCELLED") await tx.supplier.update({ where: { id: nextSupplierId }, data: { balance: { increment: nextDue } } });
       const updated = await tx.purchase.update({ where: { id: existing.id }, data: updateData, include: { supplier: true, items: { include: { product: true } } } });
+      await syncAutomaticPurchasePayment(tx, {
+        shopId: user.shopId,
+        purchase: updated,
+        amount: nextPaid,
+        purchasePaidAmount: nextPaid,
+        method: "CASH",
+        createdById: user.id
+      });
       await tx.activityLog.create({ data: { shopId: user.shopId, userId: user.id, type: "PURCHASE_UPDATED", title: `Purchase ${updated.purchaseNo} updated` } });
       return updated;
     });

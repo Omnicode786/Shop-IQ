@@ -50,7 +50,8 @@ export default async function Suppliers({ searchParams }: { searchParams?: Table
     supplierTypeDisplay: supplier.supplierType || "General",
     leadTimeDisplay: supplier.leadTimeDays === null || supplier.leadTimeDays === undefined ? "-" : `${supplier.leadTimeDays} days`,
     reliabilityDisplay: `${supplier.reliabilityScore}%`,
-    balanceDisplay: money(supplier.balance)
+    balanceDisplay: money(supplier.balance),
+    statusDisplay: supplier.status || "ACTIVE"
   }));
   const dues = Math.max(Number(supplierBalance._sum.balance || 0), 0);
   const supplierTypeOptions = toPlain(supplierTypesRaw).map((supplier: any) => supplier.supplierType).filter(Boolean);
@@ -111,8 +112,13 @@ export default async function Suppliers({ searchParams }: { searchParams?: Table
             { key: "leadTimeDays", label: "Lead time days", type: "number" },
             { key: "ntn", label: "NTN" },
             { key: "gstNumber", label: "GST number" },
-            { key: "balance", label: "Opening payable", type: "number" },
+            { key: "balance", label: "Current payable", type: "number", readOnly: true },
+            { key: "openingBalance", label: "Opening payable", type: "number", hideOnEdit: true },
+            { key: "balanceAdjustment", label: "Adjust balance (+/-)", type: "number", hideOnCreate: true },
+            { key: "balanceAdjustmentReason", label: "Adjustment reason", type: "select", hideOnCreate: true, options: [{ label: "Opening balance correction", value: "Opening balance correction" }, { label: "Supplier discount/waiver", value: "Supplier discount/waiver" }, { label: "Refund adjustment", value: "Refund adjustment" }, { label: "Other", value: "Other" }] },
+            { key: "balanceAdjustmentNote", label: "Adjustment note", type: "text", hideOnCreate: true, span: "full" },
             { key: "reliabilityScore", label: "Reliability score", type: "number" },
+            { key: "status", label: "Status", type: "select", options: [{ label: "Active", value: "ACTIVE" }, { label: "Inactive", value: "INACTIVE" }] },
             { key: "notes", label: "Notes", type: "textarea", span: "full" }
           ]}
           columns={[
@@ -122,7 +128,8 @@ export default async function Suppliers({ searchParams }: { searchParams?: Table
             { key: "leadTimeDisplay", label: "Lead time" },
             { key: "purchaseCount", label: "Purchases" },
             { key: "reliabilityDisplay", label: "Reliability" },
-            { key: "balanceDisplay", label: "Balance" }
+            { key: "balanceDisplay", label: "Balance" },
+            { key: "statusDisplay", label: "Status" }
           ]}
           canCreate={can(user?.role, "suppliers", "create")}
           canUpdate={can(user?.role, "suppliers", "update")}

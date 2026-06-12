@@ -32,6 +32,8 @@ export function captureModalOrigin(element: Element | null | undefined): ModalMo
 export function modalMotionStyle(origin: ModalMotionOrigin | null): CSSProperties {
   const viewportWidth = typeof window === "undefined" ? 0 : window.innerWidth;
   const viewportHeight = typeof window === "undefined" ? 0 : window.innerHeight;
+  const px = (value: number) => `${Math.round(value * 100) / 100}px`;
+  const unit = (value: number) => String(Math.round(value * 10000) / 10000);
   if (!origin) {
     return {
       ["--modal-dx" as string]: "0px",
@@ -45,12 +47,12 @@ export function modalMotionStyle(origin: ModalMotionOrigin | null): CSSPropertie
   const targetWidth = Math.min(896, Math.max(320, viewportWidth - 24));
   const targetHeight = Math.min(704, Math.max(260, viewportHeight * 0.82));
   return {
-    ["--modal-dx" as string]: `${origin.x - viewportWidth / 2}px`,
-    ["--modal-dy" as string]: `${origin.y - viewportHeight / 2}px`,
-    ["--modal-origin-scale" as string]: String(origin.scale),
-    ["--modal-origin-scale-x" as string]: String(Math.max(0.045, Math.min(0.42, origin.width / targetWidth))),
-    ["--modal-origin-scale-y" as string]: String(Math.max(0.045, Math.min(0.32, origin.height / targetHeight))),
-    ["--modal-origin-radius" as string]: `${Math.max(6, origin.radius)}px`
+    ["--modal-dx" as string]: px(origin.x - viewportWidth / 2),
+    ["--modal-dy" as string]: px(origin.y - viewportHeight / 2),
+    ["--modal-origin-scale" as string]: unit(origin.scale),
+    ["--modal-origin-scale-x" as string]: unit(Math.max(0.045, Math.min(0.42, origin.width / targetWidth))),
+    ["--modal-origin-scale-y" as string]: unit(Math.max(0.045, Math.min(0.32, origin.height / targetHeight))),
+    ["--modal-origin-radius" as string]: px(Math.max(6, origin.radius))
   };
 }
 
